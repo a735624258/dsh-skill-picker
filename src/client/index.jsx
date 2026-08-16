@@ -17,8 +17,8 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 
-/** Required services: the slot registry (composer tool-row seats). */
-export const inject = ['slots']
+/** Required services: the slot registry (composer tool-row seats) and sessions (workspace cwd). */
+export const inject = ['slots', 'sessions']
 
 /** localStorage key for the picker's per-browser usage history. */
 const USAGE_KEY = 'dsh-skill-picker:usage'
@@ -172,14 +172,17 @@ function SkillPickerButton(props) {
   const load = useCallback(async () => {
     if (skills !== undefined || error !== undefined) return
     try {
-      const res = await fetch('/dsh-skill-picker/skills', { headers: { accept: 'application/json' } })
+      // Carry the active workspace cwd so the host can also scan project-level
+      // skill dirs (<cwd>/.dsh/skills, <cwd>/.agents/skills).
+      const cwd = typeof props.cwd === 'string' && props.cwd !== '' ? `?cwd=${encodeURIComponent(props.cwd)}` : ''
+      const res = await fetch(`/dsh-skill-picker/skills${cwd}`, { headers: { accept: 'application/json' } })
       const json = await res.json()
       if (!json.ok) throw new Error(json.error || 'bad response')
       setSkills(Array.isArray(json.skills) ? json.skills : [])
     } catch (cause) {
       setError(String(cause?.message ?? cause))
     }
-  }, [skills, error])
+  }, [skills, error, props.cwd])
 
   const toggle = () => {
     if (!open) void load()
@@ -311,14 +314,34 @@ function SkillPickerButton(props) {
 
 /** Apply the browser half: register the picker into the composer tool row. */
 export function apply(ctx) {
-  ctx.effect(
-    () =>
-      ctx.slots.inject('conversation.input.right', () =>
-        ctx.slots.register(
-          { name: 'conversation.input.right', id: 'skill-picker', order: 100, label: 'Skill picker' },
-          SkillPickerButton,
-        ),
+  // Track the active session's workspace cwd so the picker can show
+  // project-level skills too (mirrors aionui-panel's session-list pattern).
+  let currentCwd = ''
+  const syncCwd = () => {
+    try {
+      const snapshot = ctx.sessions.list.getSnapshot()
+      const sessionId = snapshot.current
+      const cwd = sessionId === undefined ? undefined : snapshot.byId[sessionId]?.cwd
+      currentCwd = typeof cwd === 'string' ? cwd : ''
+    } catch {
+      currentCwd = ''
+    }
+  }
+  syncCwd()
+  const unsubscribe = ctx.sessions.list.subscribe(syncCwd)
+  ctx.effect(() => {
+    // Wrap the component so framework props pass through untouched and the
+    // live workspace cwd is attached — never swallow the composed props.
+    const PickerWithCwd = (props) => React.createElement(SkillPickerButton, { ...props, cwd: currentCwd })
+    const dispose = ctx.slots.inject('conversation.input.right', () =>
+      ctx.slots.register(
+        { name: 'conversation.input.right', id: 'skill-picker', order: 100, label: 'Skill picker' },
+        PickerWithCwd,
       ),
-    'dsh-skill-picker: composer input slot',
-  )
+    )
+    return () => {
+      dispose()
+      unsubscribe()
+    }
+  }, 'dsh-skill-picker: composer input slot')
 }

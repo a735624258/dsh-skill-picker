@@ -52,16 +52,14 @@ function parseFrontmatter(content) {
   return out
 }
 
-/** Scan the user skills directory; never throws (a missing dir yields []). */
-async function scanUserSkills() {
-  const dir = userSkillsDir()
+/** Scan one skill directory into the map; never throws (missing dir is a no-op). */
+async function scanSkillsDirInto(map, dir) {
   let entries
   try {
     entries = await readdir(dir, { withFileTypes: true })
   } catch {
-    return []
+    return
   }
-  const skills = []
   for (const entry of entries) {
     if (!entry.isDirectory()) continue
     const skillDir = path.join(dir, entry.name)
@@ -72,14 +70,29 @@ async function scanUserSkills() {
       continue
     }
     const meta = parseFrontmatter(content)
-    skills.push({
+    // Later writes win, so project-level skills override same-named user skills.
+    map.set(meta.name ?? entry.name, {
       name: meta.name ?? entry.name,
       description: meta.description ?? '',
       path: skillDir,
     })
   }
-  skills.sort((a, b) => a.name.localeCompare(b.name))
-  return skills
+}
+
+/**
+ * Scan user-level plus (when a workspace cwd is known) project-level skill
+ * directories, mirroring the official provider's roots. Never throws (a
+ * missing user dir yields []).
+ * @param cwd - the active session's workspace root (undefined = user level only).
+ */
+async function scanSkills(cwd) {
+  const map = new Map()
+  await scanSkillsDirInto(map, userSkillsDir())
+  if (typeof cwd === 'string' && cwd !== '') {
+    await scanSkillsDirInto(map, path.join(cwd, '.dsh', 'skills'))
+    await scanSkillsDirInto(map, path.join(cwd, '.agents', 'skills'))
+  }
+  return [...map.values()].sort((a, b) => a.name.localeCompare(b.name))
 }
 
 /**
@@ -88,9 +101,11 @@ async function scanUserSkills() {
  */
 export function apply(ctx) {
   ctx.effect(() => {
-    const handler = async (_req, res) => {
+    const handler = async (req, res) => {
       try {
-        const skills = await scanUserSkills()
+        // cwd query carries the active session's workspace root from the client.
+        const cwd = req.url !== undefined ? new URL(req.url, 'http://dsh').searchParams.get('cwd') ?? undefined : undefined
+        const skills = await scanSkills(cwd)
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify({ ok: true, complete: true, skills }))
       } catch (error) {

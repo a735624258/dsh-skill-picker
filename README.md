@@ -1,4 +1,4 @@
-﻿# dsh-skill-picker
+# dsh-skill-picker
 
 > **技能记不住名字？官方 `/` 补全靠前缀记忆，装了几十个技能谁记得住？** 本插件让技能**看得见、翻得到、选得快**——点一下 ⚡，全部技能带描述排在你面前，搜索、点选、插入，随消息发出自动加载。
 
@@ -59,14 +59,14 @@ DSH 的 [dsh-tool-skill](https://github.com/deepseek-ai/deepseek-harness) 在 `a
 ```
 [client]  ⚡ 按钮 → fetch('/dsh-skill-picker/skills')
                     ↓
-[host]    扫描 $DSH_HOME/skills（默认 ~/.dsh/skills）→ 技能目录（name + description）
+[host]    扫描用户级 $DSH_HOME/skills + 项目级 <cwd>/.dsh/skills 等 → 技能目录（name + description）
                     ↓
 [client]  点选 → inputActions.setDraft(draft + '/技能名 ')
                     ↓
 [DSH]     agent/pre-step 识别手势 → 自动加载技能 → 执行
 ```
 
-- host 半：注册 `GET /dsh-skill-picker/skills` 路由（直接扫描 DSH 用户技能目录 `$DSH_HOME/skills`，与官方 `dsh-skill-filesystem` provider 同根同源），并给 agent 注入协作指引（systemPrompt section）
+- host 半：注册 `GET /dsh-skill-picker/skills` 路由（扫描用户级 `$DSH_HOME/skills` + 项目级 `<cwd>/.dsh/skills`、`<cwd>/.agents/skills`，与官方 `dsh-skill-filesystem` provider 同根同源），并给 agent 注入协作指引（systemPrompt section）
 - client 半：注册到官方 `conversation.input.right` 插槽（composer 工具行、发送按钮左侧的控件位），插入文本走框架输入机的 `inputActions.setDraft`（单一路径，撤销/草稿持久化自动处理）；最近/常用排序存 localStorage
 
 ## 与官方 `/` 补全的关系
@@ -84,8 +84,8 @@ DSH 官方已内置技能补全：在输入框输入 `/` 会弹出技能菜单�
 
 ## 兼容性与注意事项
 
-- **技能目录**：扫描 `$DSH_HOME/skills`（默认 `~/.dsh/skills`）——这是 DSH 官方技能 provider（`dsh-skill-filesystem`）自己使用的标准位置，**任何标准安装的 DSH 技能都在这里**，无需额外配置。也支持通过 `DSH_HOME` 环境变量自定义 DSH 配置目录。
-- **暂不扫描**：project 级技能（`<workspace>/.dsh/skills`、`<workspace>/.agents/skills`）与 `~/.agents/skills`、自定义技能目录——v1 只覆盖用户全局技能。需要的话欢迎 PR。
+- **技能目录**：扫描用户全局技能 `$DSH_HOME/skills`（默认 `~/.dsh/skills`），并**自动合并当前工作区的项目级技能** `<workspace>/.dsh/skills` 与 `<workspace>/.agents/skills`（同名时项目级优先）——与官方技能 provider（`dsh-skill-filesystem`）的目录完全同源，任何标准安装的 DSH 技能都在覆盖范围内，无需额外配置。也支持通过 `DSH_HOME` 环境变量自定义 DSH 配置目录。
+- **暂不扫描**：`~/.agents/skills` 与自定义技能目录（`customSkillDirs` 配置）——需要的话欢迎 PR。
 - **失败保护**：client 端用 `ctx.slots.inject`（等 `conversation.input.right` 插槽声明存在才注册，插槽缺失时静默跳过，不会拖垮启动）；host 端路由 try/catch，扫描目录不存在时返回空列表而非报错。
 - **依赖版本**：按 DSH `0.1.0-rc.6` API 编写（cordis 4 / web profile 标准装配）。如遇 DSH 大版本更新导致 API 变化，插件会以启动日志的插件错误提示为准，卸载 `dsh plugin --profile web remove dsh-skill-picker` 即可回退。
 
