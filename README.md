@@ -32,12 +32,20 @@ English: A skill picker for the DSH Web GUI — a button in the composer's right
 ## 安装
 
 ```sh
-# 本地路径（开发）
+# 方式一：GitHub 克隆 + link（推荐，无需发布 npm）
+git clone https://github.com/a735624258/dsh-skill-picker.git
 dsh plugin --profile web add link:/path/to/dsh-skill-picker
 
-# 发布后（npm / GitHub link）
+# 方式二：Git 依赖直装
+dsh plugin --profile web add "github:a735624258/dsh-skill-picker"
+
+# 方式三：发布到 npm 后（预构建安装，体验最佳）
 dsh plugin --profile web add dsh-skill-picker
 ```
+
+> 注：目前**尚未发布 npm**（`npm view dsh-skill-picker` 会 404），请用方式一或方式二。
+> 若 `dsh` 命令因 PowerShell 执行策略被拒（`File ... cannot be loaded`），用：
+> `powershell -ExecutionPolicy Bypass -Command "dsh plugin --profile web add link:C:\path\to\dsh-skill-picker"`
 
 重启 `dsh web`（或刷新页面加载新 bundle）后生效。
 
