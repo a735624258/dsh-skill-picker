@@ -1,15 +1,31 @@
 # dsh-skill-picker
 
+> **技能记不住名字？官方 `/` 补全靠前缀记忆，装了几十个技能谁记得住？** 本插件让技能**看得见、翻得到、选得快**——点一下 ⚡，全部技能带描述排在你面前，搜索、点选、插入，随消息发出自动加载。
+
 DSH Web GUI 的技能选择器：在输入框（composer）工具行右侧加一个按钮，点开可以**搜索并点选已安装的技能**，选中后把官方 `/技能名` 手势插入发送框——随消息一起发出，DSH 原生机制就会自动加载该技能并执行。WorkBuddy 式"把技能写进发送框"的交互，DeepSeek Harness 复刻版。
 
 English: A skill picker for the DSH Web GUI — a button in the composer's right tool row opens a searchable list of installed skills; picking one inserts the official `/skill-name` gesture into the draft, so DSH's native user-invocation path loads the skill with your message.
 
+## 为什么用它（vs 官方 `/` 补全）
+
+官方内置了 `/` 技能补全，但它是**记忆驱动**的——你得先记得技能名，打 `/` + 前缀才能过滤出来。技能一多就抓瞎：
+
+| | 官方 `/` 补全 | dsh-skill-picker |
+|---|---|---|
+| 触发 | 输入框打 `/` | 输入框旁 ⚡ 按钮 |
+| 查找方式 | 前缀记忆驱动，**忘了名字就找不到** | 全列表浏览 + 关键字搜索，**忘了名字也能翻到** |
+| 排序 | 固定 | **最近使用置顶、常用靠前** |
+| 描述可见 | 精简 | 完整描述一眼看全 |
+
+**记得名字用官方，忘了名字用本插件——两者互补，可同时使用。**
+
 ## 特性
 
-- ⚡ 输入框旁常驻闪电按钮（DeepSeek 品牌蓝渐变 `--dsw-static-deepseek-400→600`），一键弹出技能面板
-- 🔍 实时搜索（按技能名 / 描述）
-- 📋 列表直接扫描 `~/.dsh/skills` 目录（与官方技能 provider 同源，含技能名 + 描述）
-- 🧩 插入的是官方 `/技能名` 手势——加载/执行走 DSH 原生机制，**零 agent 侧改动**
+- ⚡ 一键弹出全部技能（DeepSeek 品牌蓝渐变闪电按钮）
+- 🔍 实时搜索（技能名 / 描述都搜）
+- 🧠 **最近使用置顶、常用靠前**的智能排序（WorkBuddy 同款）
+- 📋 直接扫描 `~/.dsh/skills`（官方技能 provider 同源目录，标准安装即用）
+- 🧩 插入官方 `/技能名` 手势，加载/执行走 DSH 原生机制，**零 agent 侧改动**
 - 🎨 跟随 Web UI 主题（CSS 变量），浅色/深色自适应
 - 📦 纯 client + host 双半插件，无第三方运行时依赖
 
@@ -27,7 +43,7 @@ dsh plugin --profile web add dsh-skill-picker
 
 ## 用法
 
-1. 打开任一会话，在输入框工具行右侧找到**鲸鱼+星火按钮**
+1. 打开任一会话，在输入框工具行右侧找到**⚡ 闪电按钮**
 2. 点击弹出技能列表（可输入关键字过滤）
 3. 点选技能 → 发送框自动出现 `/技能名 `
 4. 继续输入你的话并发送——DSH 会识别 `/技能名` 手势，自动加载该技能并按其指令执行
