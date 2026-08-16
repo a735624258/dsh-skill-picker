@@ -17,8 +17,8 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 
-/** Required services: the slot registry (composer tool-row seats) and sessions (workspace cwd). */
-export const inject = ['slots', 'sessions']
+/** Required services: slot registry, host connection (official skills API), sessions (workspace cwd fallback). */
+export const inject = ['slots', 'connection', 'sessions']
 
 /** localStorage key for the picker's per-browser usage history. */
 const USAGE_KEY = 'dsh-skill-picker:usage'
@@ -172,8 +172,18 @@ function SkillPickerButton(props) {
   const load = useCallback(async () => {
     if (skills !== undefined || error !== undefined) return
     try {
-      // Carry the active workspace cwd so the host can also scan project-level
-      // skill dirs (<cwd>/.dsh/skills, <cwd>/.agents/skills).
+      // Primary path: the official host skills API (same source as DSH's own
+      // `/` completion — session-scoped, covers user + project level).
+      if (typeof props.listSkills === 'function' && props.session?.sessionId !== undefined) {
+        const listed = await props.listSkills(props.session.sessionId)
+        setSkills(Array.isArray(listed) ? listed : [])
+        return
+      }
+    } catch (cause) {
+      console.warn('[dsh-skill-picker] official skills API failed, falling back to host route:', cause)
+    }
+    // Fallback path: the host's own scan route (user + project level dirs).
+    try {
       const cwd = typeof props.cwd === 'string' && props.cwd !== '' ? `?cwd=${encodeURIComponent(props.cwd)}` : ''
       const res = await fetch(`/dsh-skill-picker/skills${cwd}`, { headers: { accept: 'application/json' } })
       const json = await res.json()
@@ -182,7 +192,7 @@ function SkillPickerButton(props) {
     } catch (cause) {
       setError(String(cause?.message ?? cause))
     }
-  }, [skills, error, props.cwd])
+  }, [skills, error, props.listSkills, props.session, props.cwd])
 
   const toggle = () => {
     if (!open) void load()
@@ -314,8 +324,21 @@ function SkillPickerButton(props) {
 
 /** Apply the browser half: register the picker into the composer tool row. */
 export function apply(ctx) {
-  // Track the active session's workspace cwd so the picker can show
-  // project-level skills too (mirrors aionui-panel's session-list pattern).
+  // Primary skill source: the official host skills API (the exact RPC ui-skill
+  // feeds DSH's own `/` completion with — session-scoped, all skill layers).
+  const listSkills = async (sessionId) => {
+    const skills = ctx.connection?.api?.skills
+    if (skills === undefined || typeof skills.list !== 'function') {
+      throw new Error('connection.api.skills unavailable')
+    }
+    const controller = new AbortController()
+    const { result } = await skills.list({ sessionId }, controller.signal)
+    if (!result.ok) throw new Error(`skill.list failed: ${result.error?.code}: ${result.error?.message}`)
+    const raw = result.value?.skills ?? []
+    return raw.map((skill) => ({ name: skill.name, description: skill.description ?? '' }))
+  }
+
+  // Track the active session's workspace cwd for the host-route fallback.
   let currentCwd = ''
   const syncCwd = () => {
     try {
@@ -331,8 +354,10 @@ export function apply(ctx) {
   const unsubscribe = ctx.sessions.list.subscribe(syncCwd)
   ctx.effect(() => {
     // Wrap the component so framework props pass through untouched and the
-    // live workspace cwd is attached — never swallow the composed props.
-    const PickerWithCwd = (props) => React.createElement(SkillPickerButton, { ...props, cwd: currentCwd })
+    // live workspace cwd + official skills fetcher are attached — never
+    // swallow the composed props.
+    const PickerWithCwd = (props) =>
+      React.createElement(SkillPickerButton, { ...props, cwd: currentCwd, listSkills })
     const dispose = ctx.slots.inject('conversation.input.right', () =>
       ctx.slots.register(
         { name: 'conversation.input.right', id: 'skill-picker', order: 100, label: 'Skill picker' },

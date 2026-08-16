@@ -66,8 +66,7 @@ DSH 的 [dsh-tool-skill](https://github.com/deepseek-ai/deepseek-harness) 在 `a
 [DSH]     agent/pre-step 识别手势 → 自动加载技能 → 执行
 ```
 
-- host 半：注册 `GET /dsh-skill-picker/skills` 路由（扫描用户级 `$DSH_HOME/skills` + 项目级 `<cwd>/.dsh/skills`、`<cwd>/.agents/skills`，与官方 `dsh-skill-filesystem` provider 同根同源），并给 agent 注入协作指引（systemPrompt section）
-- client 半：注册到官方 `conversation.input.right` 插槽（composer 工具行、发送按钮左侧的控件位），插入文本走框架输入机的 `inputActions.setDraft`（单一路径，撤销/草稿持久化自动处理）；最近/常用排序存 localStorage
+- client 半：注册到官方 `conversation.input.right` 插槽（composer 工具行、发送按钮左侧的控件位），**技能列表优先走官方宿主 skills API**（`connection.api.skills.list`——与 DSH 内置 `/` 补全同源，会话作用域，自动含用户级/项目级技能），失败时回退到 host 扫描路由；插入文本走框架输入机的 `inputActions.setDraft`（单一路径，撤销/草稿持久化自动处理）；最近/常用排序存 localStorage
 
 ## 与官方 `/` 补全的关系
 
@@ -84,7 +83,7 @@ DSH 官方已内置技能补全：在输入框输入 `/` 会弹出技能菜单�
 
 ## 兼容性与注意事项
 
-- **技能目录**：扫描用户全局技能 `$DSH_HOME/skills`（默认 `~/.dsh/skills`），并**自动合并当前工作区的项目级技能** `<workspace>/.dsh/skills` 与 `<workspace>/.agents/skills`（同名时项目级优先）——与官方技能 provider（`dsh-skill-filesystem`）的目录完全同源，任何标准安装的 DSH 技能都在覆盖范围内，无需额外配置。也支持通过 `DSH_HOME` 环境变量自定义 DSH 配置目录。
+- **技能来源**：**优先走官方宿主 skills API**（`connection.api.skills.list`——与 DSH 内置 `/` 补全**完全同一个数据源**，会话作用域，自动覆盖用户级 `~/.dsh/skills`、项目级 `<workspace>/.dsh/skills`、`<workspace>/.agents/skills` 等全部官方目录）；官方 API 不可用时**自动回退**到内置扫描（用户级 + 项目级目录）。两条路都支持 `DSH_HOME` 环境变量。
 - **暂不扫描**：`~/.agents/skills` 与自定义技能目录（`customSkillDirs` 配置）——需要的话欢迎 PR。
 - **失败保护**：client 端用 `ctx.slots.inject`（等 `conversation.input.right` 插槽声明存在才注册，插槽缺失时静默跳过，不会拖垮启动）；host 端路由 try/catch，扫描目录不存在时返回空列表而非报错。
 - **依赖版本**：按 DSH `0.1.0-rc.6` API 编写（cordis 4 / web profile 标准装配）。如遇 DSH 大版本更新导致 API 变化，插件会以启动日志的插件错误提示为准，卸载 `dsh plugin --profile web remove dsh-skill-picker` 即可回退。
