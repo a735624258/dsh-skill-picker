@@ -1,0 +1,5 @@
+# 本地依赖（构建期 esbuild symlink / npm install 产物）
+node_modules/
+
+# 源码映射（可选保留；产物 lib/ 必须提交——插件安装后直接加载 lib/ 产物）
+*.map

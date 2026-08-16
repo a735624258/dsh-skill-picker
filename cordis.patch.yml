@@ -1,0 +1,12 @@
+# dsh-skill-picker bundle patch: inserts the skill-picker plugin row into the
+# web profile roster. Applied as a profile bundle layer (the `dsh.bundle.patch`
+# manifest field); install with
+# `dsh plugin --profile web add <npm-or-link>`.
+#
+# The row is a bare plugin by package name: the node half (exports ".") runs
+# in the host process (skills catalog route + agent guidance section), and the
+# `dsh.client` declaration in package.json makes the browser half
+# (exports "./client") load in the web GUI.
+- insert:
+    - id: dsh-skill-picker
+      name: 'dsh-skill-picker'
