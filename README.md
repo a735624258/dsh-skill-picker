@@ -53,6 +53,19 @@ DSH 的 [dsh-tool-skill](https://github.com/deepseek-ai/deepseek-harness) 在 `a
 - host 半：注册 `GET /dsh-skill-picker/skills` 路由（直接扫描 DSH 用户技能目录 `$DSH_HOME/skills`，与官方 `dsh-skill-filesystem` provider 同根同源），并给 agent 注入协作指引（systemPrompt section）
 - client 半：注册到官方 `conversation.input.right` 插槽（composer 工具行、发送按钮左侧的控件位），插入文本走框架输入机的 `inputActions.setDraft`（单一路径，撤销/草稿持久化自动处理）；最近/常用排序存 localStorage
 
+## 与官方 `/` 补全的关系
+
+DSH 官方已内置技能补全：在输入框输入 `/` 会弹出技能菜单，按前缀过滤（如输入 `/sk` 列出 skill 开头的技能）。本插件不替代它，而是补上官方方案的盲区：
+
+| | 官方 `/` 补全 | dsh-skill-picker |
+|---|---|---|
+| 触发 | 输入框打 `/` | 输入框旁 ⚡ 按钮 |
+| 查找方式 | **前缀记忆驱动**——需要先记得技能名才能打出来 | **全列表浏览 + 关键字搜索**——忘了名字也能翻到 |
+| 排序 | 固定顺序 | 最近使用置顶、常用靠前（localStorage） |
+| 适合场景 | 记得名字的老手 | 技能多、记不全名字、想翻着选的人 |
+
+一句话：**记得名字用官方，忘了名字用本插件**。两者互补，可同时使用。
+
 ## 兼容性与注意事项
 
 - **技能目录**：扫描 `$DSH_HOME/skills`（默认 `~/.dsh/skills`）——这是 DSH 官方技能 provider（`dsh-skill-filesystem`）自己使用的标准位置，**任何标准安装的 DSH 技能都在这里**，无需额外配置。也支持通过 `DSH_HOME` 环境变量自定义 DSH 配置目录。
