@@ -22,9 +22,10 @@ English: A skill picker for the DSH Web GUI — a button in the composer's right
 ## 特性
 
 - ⚡ 一键弹出全部技能（闪电图标，人人看得懂）
+- **`/` 直接补全**：输入斜杠即列出全部技能，**模糊搜索**（技能名+描述任意匹配）+ **常用排序**（v0.2.0）
 - 🔍 实时搜索（技能名 / 描述都搜）
 - 🧠 **最近使用置顶、常用靠前**的智能排序（WorkBuddy 同款）
-- 📋 直接扫描 `~/.dsh/skills`（官方技能 provider 同源目录，标准安装即用）
+- 📋 走官方宿主 skills API（与 DSH 内置 `/` 补全同一数据源，自动覆盖用户级+项目级技能）
 - 🧩 插入官方 `/技能名` 手势，加载/执行走 DSH 原生机制，**零 agent 侧改动**
 - 🎨 跟随 Web UI 主题（CSS 变量），浅色/深色自适应
 - 📦 纯 client + host 双半插件，无第三方运行时依赖

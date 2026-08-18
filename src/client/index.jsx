@@ -17,8 +17,8 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 
-/** Required services: slot registry, host connection (official skills API), sessions (workspace cwd fallback). */
-export const inject = ['slots', 'connection', 'sessions']
+/** Required services: slot registry, host connection (official skills API), sessions (workspace cwd fallback), input triggers (/ fuzzy source). */
+export const inject = ['slots', 'connection', 'sessions', 'inputTriggers']
 
 /** localStorage key for the picker's per-browser usage history. */
 const USAGE_KEY = 'dsh-skill-picker:usage'
@@ -369,4 +369,56 @@ export function apply(ctx) {
       unsubscribe()
     }
   }, 'dsh-skill-picker: composer input slot')
+
+  // Fuzzy `/` completion source: negative order puts the skill group ABOVE
+  // the slash commands (command source sits at order 0), and beats the
+  // official ui-skill prefix source too — typing `/` matches name AND
+  // description anywhere, with usage ordering (same rule as the ⚡ panel).
+  ctx.effect(() => {
+    const source = {
+      trigger: '/',
+      name: 'skill-fuzzy',
+      order: -10,
+      async candidates(session, { query, signal }) {
+        const skills = await listSkills(session.sessionId)
+        if (signal.aborted) return []
+        const usage = loadUsage()
+        // Usage ordering: last picked first, then most frequent, then by name
+        // (same rule as the ⚡ panel, read fresh so picks show up immediately).
+        const ordered = skills.slice().sort((a, b) => {
+          const ua = usage[a.name]
+          const ub = usage[b.name]
+          const la = ua?.lastUsed ?? 0
+          const lb = ub?.lastUsed ?? 0
+          if (la !== lb) return lb - la
+          const ca = ua?.count ?? 0
+          const cb = ub?.count ?? 0
+          if (ca !== cb) return cb - ca
+          return a.name.localeCompare(b.name)
+        })
+        const q = String(query ?? '').trim().toLowerCase()
+        const matches =
+          q === ''
+            ? ordered
+            : ordered.filter(
+                (s) =>
+                  s.name.toLowerCase().includes(q) ||
+                  String(s.description ?? '').toLowerCase().includes(q),
+              )
+        // Empty `/` shows ALL skills (usage-ordered); typing fuzzy-filters.
+        // Keep a generous cap so very large skill sets stay snappy.
+        return matches.slice(0, 50).map((s) => ({ name: s.name, description: s.description }))
+      },
+      warm(session) {
+        listSkills(session.sessionId).catch(() => {})
+      },
+      onPick({ candidate }) {
+        return { text: `/${candidate.name} ` }
+      },
+    }
+    const unregister = ctx.inputTriggers.registerSource(source)
+    return () => {
+      unregister()
+    }
+  }, 'dsh-skill-picker: fuzzy / source')
 }
