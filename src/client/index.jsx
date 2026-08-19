@@ -16,6 +16,7 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
+import fuzzysort from 'fuzzysort'
 
 /** Required services: slot registry, host connection (official skills API), sessions (workspace cwd fallback), input triggers (/ fuzzy source). */
 export const inject = ['slots', 'connection', 'sessions', 'inputTriggers']
@@ -42,6 +43,25 @@ function saveUsage(usage) {
   } catch {
     /* storage unavailable — ordering just won't persist */
   }
+}
+
+/**
+ * Shared usage ordering — the single rule used by BOTH the ⚡ panel and the
+ * `/` completion: last picked first, then most frequent, then by name.
+ * A fresh copy is returned; the input array is untouched.
+ */
+function rankByUsage(skills, usage) {
+  return skills.slice().sort((a, b) => {
+    const ua = usage[a.name]
+    const ub = usage[b.name]
+    const la = ua?.lastUsed ?? 0
+    const lb = ub?.lastUsed ?? 0
+    if (la !== lb) return lb - la
+    const ca = ua?.count ?? 0
+    const cb = ub?.count ?? 0
+    if (ca !== cb) return cb - ca
+    return a.name.localeCompare(b.name)
+  })
 }
 
 /** Row height matches the resident chrome (access mode, plan, attach, model). */
@@ -243,18 +263,9 @@ function SkillPickerButton(props) {
     return () => document.removeEventListener('mousedown', onDown)
   }, [open])
 
-  // Usage ordering: last picked first, then most frequent, then by name.
-  const ordered = (skills ?? []).slice().sort((a, b) => {
-    const ua = usage[a.name]
-    const ub = usage[b.name]
-    const la = ua?.lastUsed ?? 0
-    const lb = ub?.lastUsed ?? 0
-    if (la !== lb) return lb - la
-    const ca = ua?.count ?? 0
-    const cb = ub?.count ?? 0
-    if (ca !== cb) return cb - ca
-    return a.name.localeCompare(b.name)
-  })
+  // Usage ordering: last picked first, then most frequent, then by name
+  // (shared with the `/` completion — one rule everywhere).
+  const ordered = rankByUsage(skills ?? [], usage)
 
   const filtered = ordered
     .filter((skill) => {
@@ -375,6 +386,25 @@ export function apply(ctx) {
   // official ui-skill prefix source too — typing `/` matches name AND
   // description anywhere, with usage ordering (same rule as the ⚡ panel).
   ctx.effect(() => {
+    // Skills cache per session, so both candidates and the lexicon (chip
+    // decoration of `/skill-name` in the draft) have the same names.
+    const namesCache = new Map() // sessionId -> string[] (skill names)
+    const lexiconListeners = new Map() // sessionId -> Set<listener>
+    const notifyLexicon = (sessionId) => {
+      for (const fn of [...(lexiconListeners.get(sessionId) ?? [])]) {
+        try { fn() } catch (err) { console.error('[dsh-skill-picker] lexicon listener failed:', err) }
+      }
+    }
+    const refreshNames = async (sessionId) => {
+      try {
+        const skills = await listSkills(sessionId)
+        namesCache.set(sessionId, (Array.isArray(skills) ? skills : []).map((s) => s.name))
+        notifyLexicon(sessionId)
+      } catch {
+        /* keep last cache; lexicon stays empty until a successful fetch */
+      }
+    }
+
     const source = {
       trigger: '/',
       name: 'skill-fuzzy',
@@ -382,43 +412,64 @@ export function apply(ctx) {
       async candidates(session, { query, signal }) {
         const skills = await listSkills(session.sessionId)
         if (signal.aborted) return []
-        const usage = loadUsage()
-        // Usage ordering: last picked first, then most frequent, then by name
-        // (same rule as the ⚡ panel, read fresh so picks show up immediately).
-        const ordered = skills.slice().sort((a, b) => {
-          const ua = usage[a.name]
-          const ub = usage[b.name]
-          const la = ua?.lastUsed ?? 0
-          const lb = ub?.lastUsed ?? 0
-          if (la !== lb) return lb - la
-          const ca = ua?.count ?? 0
-          const cb = ub?.count ?? 0
-          if (ca !== cb) return cb - ca
-          return a.name.localeCompare(b.name)
-        })
+        namesCache.set(session.sessionId, skills.map((s) => s.name))
+        notifyLexicon(session.sessionId)
+        const ordered = rankByUsage(skills, loadUsage())
         const q = String(query ?? '').trim().toLowerCase()
-        const matches =
-          q === ''
-            ? ordered
-            : ordered.filter(
-                (s) =>
-                  s.name.toLowerCase().includes(q) ||
-                  String(s.description ?? '').toLowerCase().includes(q),
-              )
-        // Empty `/` shows ALL skills (usage-ordered); typing fuzzy-filters.
-        // Keep a generous cap so very large skill sets stay snappy.
-        return matches.slice(0, 50).map((s) => ({ name: s.name, description: s.description }))
+        if (q === '') {
+          // Empty `/` surfaces ALL skills, usage first (same rule as ⚡ panel).
+          return ordered.map((s) => ({ name: s.name, description: s.description }))
+        }
+        // Typing uses fuzzysort (subsequence matching + relevance score) over
+        // name AND description, so partial/gappy queries and keywords match.
+        const targets = ordered.map((s) => ({ s, search: `${s.name} ${s.description ?? ''}` }))
+        const results = fuzzysort.go(q, targets, {
+          key: 'search',
+          limit: 12,
+          threshold: -10000,
+        })
+        return results
+          .filter((r) => r.score > 0)
+          .map((r) => ({ name: r.obj.s.name, description: r.obj.s.description }))
       },
       warm(session) {
-        listSkills(session.sessionId).catch(() => {})
+        refreshNames(session.sessionId)
+      },
+      lexicon(session) {
+        return namesCache.get(session.sessionId)
+      },
+      subscribeLexicon(session, listener) {
+        const key = session.sessionId
+        const set = lexiconListeners.get(key) ?? new Set()
+        set.add(listener)
+        lexiconListeners.set(key, set)
+        return () => {
+          const cur = lexiconListeners.get(key)
+          if (cur !== undefined) {
+            cur.delete(listener)
+            if (cur.size === 0) lexiconListeners.delete(key)
+          }
+        }
       },
       onPick({ candidate }) {
+        // Record usage (same rule as the ⚡ panel) so slash-picked skills
+        // rank higher the next time they open `/`.
+        try {
+          const usage = loadUsage()
+          const name = candidate.name
+          const next = { ...usage, [name]: { count: (usage[name]?.count ?? 0) + 1, lastUsed: Date.now() } }
+          saveUsage(next)
+        } catch {
+          /* usage recording is best-effort */
+        }
         return { text: `/${candidate.name} ` }
       },
     }
     const unregister = ctx.inputTriggers.registerSource(source)
     return () => {
       unregister()
+      namesCache.clear()
+      lexiconListeners.clear()
     }
   }, 'dsh-skill-picker: fuzzy / source')
 }
