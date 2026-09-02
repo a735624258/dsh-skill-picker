@@ -17,7 +17,7 @@ DSH Web GUI 的技能选择器：在输入框（composer）工具行右侧加一
 
 English: A skill picker for the DSH Web GUI — a button in the composer's right tool row opens a searchable list of installed skills; picking one inserts the official `/skill-name` gesture into the draft, so DSH's native user-invocation path loads the skill with your message.
 
-当前版本：**v0.3.1**（`/` 补全 + ⚡ 面板均支持**拼音搜索**）
+当前版本：**v0.3.2**（`/` 补全 + ⚡ 面板均支持**拼音搜索**）
 
 ## 为什么用它（vs 官方 `/` 补全）
 
@@ -60,9 +60,16 @@ dsh plugin --profile web add "github:a735624258/dsh-skill-picker"
 dsh plugin --profile web add dsh-skill-picker
 ```
 
-> 注：已发布 npm（`npm view dsh-skill-picker` 可见 0.3.1），方式三可直接安装；未发布时请用方式一或方式二。
+> 注：已发布 npm（`npm view dsh-skill-picker` 可见 0.3.2），方式三可直接安装；未发布时请用方式一或方式二。
 > 若 `dsh` 命令因 PowerShell 执行策略被拒（`File ... cannot be loaded`），用：
 > `powershell -ExecutionPolicy Bypass -Command "dsh plugin --profile web add link:C:\path\to\dsh-skill-picker"`
+
+**网络特例（国内/HTTPS 受限时）**：
+- 方式一的 `git clone` 走 HTTPS 慢或不通时，改用 SSH：`git clone git@github.com:a735624258/dsh-skill-picker.git`
+- 方式二的 `github:` 简写强制 HTTPS clone；仅 SSH 可用时改用：
+  `dsh plugin --profile web add "git+ssh://git@github.com:a735624258/dsh-skill-picker.git"`
+  （或先执行 `git config --global url."git@github.com:".insteadOf "https://github.com/"` 让 pnpm 走 SSH）
+- 方式三新版本发布后 **24 小时内**裸名会被 pnpm 的 minimumReleaseAge 门禁挡到旧版（如装到 0.2.0）；急用最新请指定版本：`dsh plugin --profile web add dsh-skill-picker@0.3.1`
 
 重启 `dsh web`（或刷新页面加载新 bundle）后生效。
 
@@ -95,6 +102,7 @@ DSH 的 [dsh-tool-skill](https://github.com/deepseek-ai/deepseek-harness) 在 `a
 
 ## 更新日志
 
+- **v0.3.2**：安装文档修正——实测三种安装方式并补网络特例（HTTPS 受限改 SSH、npm 新版本 24h 内被 minimumReleaseAge 门禁挡旧版的规避方法）
 - **v0.3.1**：README 顶部新增一键快速安装命令（`dsh plugin --profile web add dsh-skill-picker`）与 npm 版本/许可徽章
 - **v0.3.0**：拼音搜索——`/` 补全与 ⚡ 面板的搜索目标加入技能名/描述的拼音全拼（带空格+连打）与首字母索引，中文技能可拼音直搜（如 `ji yi` →「备份记忆」）
 - **v0.2.2**：⚡ 弹层键盘导航（↑↓ 选择、Enter 插入、Esc 关闭）；按钮盒 28×28 → 24×24，闪电图标 16px（对应 issue #1、#4）
