@@ -1,7 +1,7 @@
 {
   "name": "dsh-skill-picker",
   "description": "DSH Web GUI skill picker: a button beside the composer opens a searchable list of installed skills; picking one inserts the official `/skill-name` gesture into the input box, so the skill loads with your message (WorkBuddy-style skill invocation for DeepSeek Harness).",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -26,7 +26,20 @@
         "@deepseek-ai/dsh-client-locale"
       ],
       "platform": "web"
+    },
+    "compatibility": {
+      "dshReleases": {
+        "0.1.1-rc.1": "unknown",
+        "0.1.1-rc.2": "compatible",
+        "0.1.2-alpha.2": "compatible",
+        "0.1.2-alpha.3": "compatible",
+        "0.1.2-alpha.4": "compatible",
+        "0.1.2-alpha.5": "compatible"
+      }
     }
+  },
+  "engines": {
+    "node": ">=22"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
