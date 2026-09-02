@@ -6,6 +6,8 @@ DSH Web GUI 的技能选择器：在输入框（composer）工具行右侧加一
 
 English: A skill picker for the DSH Web GUI — a button in the composer's right tool row opens a searchable list of installed skills; picking one inserts the official `/skill-name` gesture into the draft, so DSH's native user-invocation path loads the skill with your message.
 
+当前版本：**v0.3.0**（`/` 补全 + ⚡ 面板均支持**拼音搜索**）
+
 ## 为什么用它（vs 官方 `/` 补全）
 
 官方内置了 `/` 技能补全，但它是**记忆驱动**的——你得先记得技能名，打 `/` + 前缀才能过滤出来。技能一多就抓瞎：
@@ -14,6 +16,7 @@ English: A skill picker for the DSH Web GUI — a button in the composer's right
 |---|---|---|
 | 触发 | 输入框打 `/` | 输入框旁 ⚡ 按钮 |
 | 查找方式 | 前缀记忆驱动，**忘了名字就找不到** | 全列表浏览 + 关键字搜索，**忘了名字也能翻到** |
+| 中文技能 | 只能打名字/前缀 | **拼音直搜**：`ji yi` / `jiyi` / `jy` 都能搜到「备份记忆」类中文技能（v0.3.0） |
 | 排序 | 固定 | **最近使用置顶、常用靠前** |
 | 描述可见 | 精简 | 完整描述一眼看全 |
 
@@ -23,13 +26,14 @@ English: A skill picker for the DSH Web GUI — a button in the composer's right
 
 - ⚡ 一键弹出全部技能（闪电图标，人人看得懂）
 - **`/` 直接补全**：输入斜杠即列出全部技能，**模糊搜索**（技能名+描述任意匹配）+ **常用排序**（v0.2.0）
-- 🔍 实时搜索（技能名 / 描述都搜）
+- 🔤 **拼音搜索**：技能名和描述都生成拼音索引（全拼带空格 `ji yi` / 连打 `jiyi` / 首字母 `jy`），中文技能不用记字就能搜（v0.3.0）
+- 🔍 实时搜索（技能名 / 描述 / 拼音都搜）
 - ⌨️ **键盘导航**：弹层内 ↑↓ 选择、Enter 插入、Esc 关闭，全程不碰鼠标（v0.2.2）
 - 🧠 **最近使用置顶、常用靠前**的智能排序（WorkBuddy 同款）
 - 📋 走官方宿主 skills API（与 DSH 内置 `/` 补全同一数据源，自动覆盖用户级+项目级技能）
 - 🧩 插入官方 `/技能名` 手势，加载/执行走 DSH 原生机制，**零 agent 侧改动**
 - 🎨 跟随 Web UI 主题（CSS 变量），浅色/深色自适应
-- 📦 纯 client + host 双半插件，无第三方运行时依赖
+- 📦 纯 client + host 双半插件（拼音库已打包进 client bundle，无额外运行时安装）
 
 ## 安装
 
@@ -45,7 +49,7 @@ dsh plugin --profile web add "github:a735624258/dsh-skill-picker"
 dsh plugin --profile web add dsh-skill-picker
 ```
 
-> 注：已发布 npm（`npm view dsh-skill-picker` 可见 0.2.0+），方式三可直接安装；未发布时请用方式一或方式二。
+> 注：已发布 npm（`npm view dsh-skill-picker` 可见 0.3.0），方式三可直接安装；未发布时请用方式一或方式二。
 > 若 `dsh` 命令因 PowerShell 执行策略被拒（`File ... cannot be loaded`），用：
 > `powershell -ExecutionPolicy Bypass -Command "dsh plugin --profile web add link:C:\path\to\dsh-skill-picker"`
 
@@ -54,11 +58,11 @@ dsh plugin --profile web add dsh-skill-picker
 ## 用法
 
 1. 打开任一会话，在输入框工具行右侧找到**⚡ 按钮**
-2. 点击弹出技能列表（可输入关键字过滤）
+2. 点击弹出技能列表（可输入关键字或**拼音**过滤，如 `ji yi` 搜「记忆」）
 3. **↑↓** 选择、**Enter** 插入（或直接鼠标点选）→ 发送框自动出现 `/技能名 `
 4. 继续输入你的话并发送——DSH 会识别 `/技能名` 手势，自动加载该技能并按其指令执行
 
-示例：点选 `duo-xuan-pi-gai` 后发送框变为 `/duo-xuan-pi-gai 帮我批改多选`，发送后技能自动加载。
+示例：点选 `duo-xuan-pi-gai` 后发送框变为 `/duo-xuan-pi-gai 帮我批改多选`，发送后技能自动加载。也可以在输入框直接打 `/duo xuan`、`/duoxuan` 靠拼音补全选到它。
 
 ## 原理
 
@@ -76,20 +80,15 @@ DSH 的 [dsh-tool-skill](https://github.com/deepseek-ai/deepseek-harness) 在 `a
 [DSH]     agent/pre-step 识别手势 → 自动加载技能 → 执行
 ```
 
-- client 半：注册到官方 `conversation.input.right` 插槽（composer 工具行、发送按钮左侧的控件位），**技能列表优先走官方宿主 skills API**（`connection.api.skills.list`——与 DSH 内置 `/` 补全同源，会话作用域，自动含用户级/项目级技能），失败时回退到 host 扫描路由；插入文本走框架输入机的 `inputActions.setDraft`（单一路径，撤销/草稿持久化自动处理）；最近/常用排序存 localStorage
+- client 半：注册到官方 `conversation.input.right` 插槽（composer 工具行、发送按钮左侧的控件位），**技能列表优先走官方宿主 skills API**（`connection.api.skills.list`——与 DSH 内置 `/` 补全同源，会话作用域，自动含用户级/项目级技能），失败时回退到 host 扫描路由；插入文本走框架输入机的 `inputActions.setDraft`（单一路径，撤销/草稿持久化自动处理）；最近/常用排序 + 拼音索引（`pinyin-pro`）在 client 侧生成，按技能缓存
 
-## 与官方 `/` 补全的关系
+## 更新日志
 
-DSH 官方已内置技能补全：在输入框输入 `/` 会弹出技能菜单，按前缀过滤（如输入 `/sk` 列出 skill 开头的技能）。本插件不替代它，而是补上官方方案的盲区：
-
-| | 官方 `/` 补全 | dsh-skill-picker |
-|---|---|---|
-| 触发 | 输入框打 `/` | 输入框旁 ⚡ 按钮 |
-| 查找方式 | **前缀记忆驱动**——需要先记得技能名才能打出来 | **全列表浏览 + 关键字搜索**——忘了名字也能翻到 |
-| 排序 | 固定顺序 | 最近使用置顶、常用靠前（localStorage） |
-| 适合场景 | 记得名字的老手 | 技能多、记不全名字、想翻着选的人 |
-
-一句话：**记得名字用官方，忘了名字用本插件**。两者互补，可同时使用。
+- **v0.3.0**：拼音搜索——`/` 补全与 ⚡ 面板的搜索目标加入技能名/描述的拼音全拼（带空格+连打）与首字母索引，中文技能可拼音直搜（如 `ji yi` →「备份记忆」）
+- **v0.2.2**：⚡ 弹层键盘导航（↑↓ 选择、Enter 插入、Esc 关闭）；按钮盒 28×28 → 24×24，闪电图标 16px（对应 issue #1、#4）
+- **v0.2.1**：声明兼容 DSH 0.1.2-alpha 系列
+- **v0.2.0**：注册为 `/` 补全候选源（fuzzysort 模糊匹配 + 最近/常用排序，排序规则与 ⚡ 面板统一）
+- **v0.1.0**：初版——⚡ 按钮弹窗搜索点选技能
 
 ## 兼容性与注意事项
 
@@ -101,7 +100,7 @@ DSH 官方已内置技能补全：在输入框输入 `/` 会弹出技能菜单�
 ## 开发
 
 ```sh
-# 安装依赖（提供 esbuild）
+# 安装依赖（提供 esbuild / fuzzysort / pinyin-pro）
 npm install
 
 # 构建（源码 src/ → 产物 lib/；client 半自动包 __ModuleLoader__ 握手）
@@ -141,7 +140,7 @@ dsh-skill-picker/
 ## 依赖
 
 - host：`@deepseek-ai/cordis`、`@deepseek-ai/dsh-host-webserver`、`@deepseek-ai/dsh-skill`、`@deepseek-ai/dsh-system-prompt`
-- client：`@deepseek-ai/dsh-client-runtime`、`@deepseek-ai/dsh-client-ui-slots`、`react`
+- client：`@deepseek-ai/dsh-client-runtime`、`@deepseek-ai/dsh-client-ui-slots`、`react`、`pinyin-pro`（拼音索引，打包进 client bundle）
 
 ## License
 
