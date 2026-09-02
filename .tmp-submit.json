@@ -1,0 +1,4 @@
+{
+  "title": "[Plugin]: dsh-skill-picker",
+  "body": "### Plugin package URL\n\nhttps://github.com/a735624258/dsh-skill-picker\n\n### Primary category\n\nUI Enhancements (ui)\n\n### One-line description\n\nDSH Web GUI 技能选择器：composer 工具行 ⚡ 一键弹出可搜索技能列表，插入官方 /技能名 手势；/ 补全支持模糊搜索与键盘导航（↑↓/Enter/Esc）。\n\n### Install command\n\n```shell\ndsh plugin --profile web add \"github:a735624258/dsh-skill-picker\"\n```\n"
+}

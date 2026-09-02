@@ -158,7 +158,7 @@ const statusStyle = {
 /** The picker's bolt glyph: DeepSeek palette gradient + slim stroke. */
 function BoltIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" style={{ display: 'block' }}>
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" style={{ display: 'block' }}>
       <defs>
         <linearGradient id="dsh-sp-bolt-grad" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="var(--dsw-static-deepseek-400, rgb(103, 158, 254))" />
