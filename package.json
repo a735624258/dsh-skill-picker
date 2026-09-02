@@ -61,5 +61,8 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/a735624258/dsh-skill-picker.git"
+  },
+  "dependencies": {
+    "pinyin-pro": "^3.29.3"
   }
 }

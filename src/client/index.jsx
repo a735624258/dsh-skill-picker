@@ -17,6 +17,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import fuzzysort from 'fuzzysort'
+import { pinyin } from 'pinyin-pro'
 
 /** Required services: slot registry, host connection (official skills API), sessions (workspace cwd fallback), input triggers (/ fuzzy source). */
 export const inject = ['slots', 'connection', 'sessions', 'inputTriggers']
@@ -62,6 +63,38 @@ function rankByUsage(skills, usage) {
     if (ca !== cb) return cb - ca
     return a.name.localeCompare(b.name)
   })
+}
+
+/**
+ * Pinyin search text for a skill name/description: spaced full pinyin
+ * (`ji yi`), joined (`jiyi`), and initials (`jy`) for the name, plus joined
+ * full pinyin and initials for the description — so either the `/` fuzzy
+ * completion or the ⚡ panel matches queries like `ji yi`, `jiyi`, or `jy`
+ * against 记忆/知识库/每日打卡-ish Chinese text. Cached per (name, desc)
+ * pair; never throws (falls back to '').
+ */
+const pinyinCache = new Map()
+function skillPinyinText(name, description = '') {
+  const key = `${name}\u0000${description}`
+  const cached = pinyinCache.get(key)
+  if (cached !== undefined) return cached
+  let text = ''
+  try {
+    const base = { toneType: 'none', nonZh: 'consecutive' }
+    const nameSpaced = pinyin(name, base)
+    const nameJoined = pinyin(name, { ...base, separator: '' })
+    const nameFirstSpaced = pinyin(name, { ...base, pattern: 'first' })
+    const nameFirstJoined = pinyin(name, { ...base, pattern: 'first', separator: '' })
+    const descSpaced = pinyin(description, base)
+    const descJoined = pinyin(description, { ...base, separator: '' })
+    const descFirstSpaced = pinyin(description, { ...base, pattern: 'first' })
+    const descFirstJoined = pinyin(description, { ...base, pattern: 'first', separator: '' })
+    text = `${nameSpaced} ${nameJoined} ${nameFirstSpaced} ${nameFirstJoined} ${descSpaced} ${descJoined} ${descFirstSpaced} ${descFirstJoined}`
+  } catch {
+    text = ''
+  }
+  pinyinCache.set(key, text)
+  return text
 }
 
 /** Row height matches the resident chrome (access mode, plan, attach, model). */
@@ -273,7 +306,11 @@ function SkillPickerButton(props) {
     .filter((skill) => {
       const q = query.trim().toLowerCase()
       if (q === '') return true
-      return skill.name.toLowerCase().includes(q) || String(skill.description ?? '').toLowerCase().includes(q)
+      return (
+        skill.name.toLowerCase().includes(q) ||
+        String(skill.description ?? '').toLowerCase().includes(q) ||
+        skillPinyinText(skill.name, skill.description ?? '').toLowerCase().includes(q)
+      )
     })
     .slice(0, 60)
 
@@ -465,7 +502,13 @@ export function apply(ctx) {
         }
         // Typing uses fuzzysort (subsequence matching + relevance score) over
         // name AND description, so partial/gappy queries and keywords match.
-        const targets = ordered.map((s) => ({ s, search: `${s.name} ${s.description ?? ''}` }))
+        // The search string also carries the skill's pinyin forms (spaced,
+        // joined, initials — name and description), so `ji yi` / `jiyi` / `jy`
+        // match Chinese skill names & descriptions.
+        const targets = ordered.map((s) => ({
+          s,
+          search: `${s.name} ${s.description ?? ''} ${skillPinyinText(s.name, s.description ?? '')}`,
+        }))
         const results = fuzzysort.go(q, targets, {
           key: 'search',
           limit: 12,
