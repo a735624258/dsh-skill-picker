@@ -60,7 +60,7 @@ dsh plugin --profile web add "github:a735624258/dsh-skill-picker"
 dsh plugin --profile web add dsh-skill-picker
 ```
 
-> 注：已发布 npm（`npm view dsh-skill-picker` 可见 0.3.0），方式三可直接安装；未发布时请用方式一或方式二。
+> 注：已发布 npm（`npm view dsh-skill-picker` 可见 0.3.1），方式三可直接安装；未发布时请用方式一或方式二。
 > 若 `dsh` 命令因 PowerShell 执行策略被拒（`File ... cannot be loaded`），用：
 > `powershell -ExecutionPolicy Bypass -Command "dsh plugin --profile web add link:C:\path\to\dsh-skill-picker"`
 
