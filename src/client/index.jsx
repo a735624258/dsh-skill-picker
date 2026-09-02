@@ -69,8 +69,8 @@ const buttonStyle = {
   display: 'inline-flex',
   alignItems: 'center',
   justifyContent: 'center',
-  width: '28px',
-  height: '28px',
+  width: '24px',
+  height: '24px',
   margin: '0 2px',
   padding: '0',
   border: '1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.25))',
@@ -158,7 +158,7 @@ const statusStyle = {
 /** The picker's bolt glyph: DeepSeek palette gradient + slim stroke. */
 function BoltIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" style={{ display: 'block' }}>
+    <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" style={{ display: 'block' }}>
       <defs>
         <linearGradient id="dsh-sp-bolt-grad" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="var(--dsw-static-deepseek-400, rgb(103, 158, 254))" />
@@ -187,7 +187,9 @@ function SkillPickerButton(props) {
   const [error, setError] = useState(undefined)
   const [query, setQuery] = useState('')
   const [usage, setUsage] = useState(() => loadUsage())
+  const [active, setActive] = useState(0)
   const boxRef = useRef(null)
+  const itemRefs = useRef([])
 
   const load = useCallback(async () => {
     if (skills !== undefined || error !== undefined) return
@@ -275,6 +277,37 @@ function SkillPickerButton(props) {
     })
     .slice(0, 60)
 
+  // Keyboard navigation (#1): reset highlight when the query changes, keep it
+  // in range when the result list shrinks, and keep the highlighted row visible.
+  useEffect(() => {
+    setActive(0)
+  }, [query])
+
+  useEffect(() => {
+    setActive((cur) => Math.min(cur, Math.max(0, filtered.length - 1)))
+  }, [filtered.length])
+
+  useEffect(() => {
+    itemRefs.current[active]?.scrollIntoView({ block: 'nearest' })
+  }, [active, filtered.length])
+
+  const onKeyDown = (event) => {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      setActive((i) => Math.min(i + 1, filtered.length - 1))
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      setActive((i) => Math.max(i - 1, 0))
+    } else if (event.key === 'Enter') {
+      event.preventDefault()
+      const skill = filtered[active]
+      if (skill !== undefined) pick(skill.name)
+    } else if (event.key === 'Escape') {
+      event.preventDefault()
+      setOpen(false)
+    }
+  }
+
   return (
     <div ref={boxRef} style={{ position: 'relative', display: 'inline-flex', flex: 'none' }}>
       <button
@@ -294,7 +327,8 @@ function SkillPickerButton(props) {
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索技能…"
+            onKeyDown={onKeyDown}
+            placeholder="搜索技能…（↑↓ 选择，Enter 插入）"
             style={searchStyle}
             autoFocus
           />
@@ -307,18 +341,27 @@ function SkillPickerButton(props) {
               {filtered.length === 0 ? (
                 <div style={statusStyle}>没有匹配的技能</div>
               ) : (
-                filtered.map((skill) => (
+                filtered.map((skill, index) => (
                   <button
                     key={skill.name}
                     type="button"
+                    ref={(el) => {
+                      itemRefs.current[index] = el
+                    }}
                     onClick={() => pick(skill.name)}
                     onMouseEnter={(event) => {
+                      setActive(index)
                       event.currentTarget.style.background = 'var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,0.12))'
                     }}
                     onMouseLeave={(event) => {
                       event.currentTarget.style.background = 'transparent'
                     }}
-                    style={itemStyle}
+                    style={{
+                      ...itemStyle,
+                      ...(index === active
+                        ? { background: 'var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,0.12))' }
+                        : {}),
+                    }}
                   >
                     <span style={nameStyle}>{`/${skill.name}`}</span>
                     <span style={descStyle}>{skill.description ?? ''}</span>

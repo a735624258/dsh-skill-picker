@@ -24,6 +24,7 @@ English: A skill picker for the DSH Web GUI — a button in the composer's right
 - ⚡ 一键弹出全部技能（闪电图标，人人看得懂）
 - **`/` 直接补全**：输入斜杠即列出全部技能，**模糊搜索**（技能名+描述任意匹配）+ **常用排序**（v0.2.0）
 - 🔍 实时搜索（技能名 / 描述都搜）
+- ⌨️ **键盘导航**：弹层内 ↑↓ 选择、Enter 插入、Esc 关闭，全程不碰鼠标（v0.2.2）
 - 🧠 **最近使用置顶、常用靠前**的智能排序（WorkBuddy 同款）
 - 📋 走官方宿主 skills API（与 DSH 内置 `/` 补全同一数据源，自动覆盖用户级+项目级技能）
 - 🧩 插入官方 `/技能名` 手势，加载/执行走 DSH 原生机制，**零 agent 侧改动**
@@ -44,7 +45,7 @@ dsh plugin --profile web add "github:a735624258/dsh-skill-picker"
 dsh plugin --profile web add dsh-skill-picker
 ```
 
-> 注：目前**尚未发布 npm**（`npm view dsh-skill-picker` 会 404），请用方式一或方式二。
+> 注：已发布 npm（`npm view dsh-skill-picker` 可见 0.2.0+），方式三可直接安装；未发布时请用方式一或方式二。
 > 若 `dsh` 命令因 PowerShell 执行策略被拒（`File ... cannot be loaded`），用：
 > `powershell -ExecutionPolicy Bypass -Command "dsh plugin --profile web add link:C:\path\to\dsh-skill-picker"`
 
@@ -54,7 +55,7 @@ dsh plugin --profile web add dsh-skill-picker
 
 1. 打开任一会话，在输入框工具行右侧找到**⚡ 按钮**
 2. 点击弹出技能列表（可输入关键字过滤）
-3. 点选技能 → 发送框自动出现 `/技能名 `
+3. **↑↓** 选择、**Enter** 插入（或直接鼠标点选）→ 发送框自动出现 `/技能名 `
 4. 继续输入你的话并发送——DSH 会识别 `/技能名` 手势，自动加载该技能并按其指令执行
 
 示例：点选 `duo-xuan-pi-gai` 后发送框变为 `/duo-xuan-pi-gai 帮我批改多选`，发送后技能自动加载。
