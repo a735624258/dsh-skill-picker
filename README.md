@@ -98,10 +98,26 @@ DSH 的 [dsh-tool-skill](https://github.com/deepseek-ai/deepseek-harness) 在 `a
 [DSH]     agent/pre-step 识别手势 → 自动加载技能 → 执行
 ```
 
-- client 半：注册到官方 `conversation.input.right` 插槽（composer 工具行、发送按钮左侧的控件位），**技能列表优先走官方宿主 skills API**（`connection.api.skills.list`——与 DSH 内置 `/` 补全同源，会话作用域，自动含用户级/项目级技能），失败时回退到 host 扫描路由；插入文本走框架输入机的 `inputActions.setDraft`（单一路径，撤销/草稿持久化自动处理）；最近/常用排序 + 拼音索引（`pinyin-pro`）在 client 侧生成，按技能缓存
+- client 半：注册到官方 `conversation.input.right` 插槽（composer 工具行、发送按钮左侧的控件位），**技能列表优先走官方宿主 skills API**（`remote.skills.list`——与 DSH 内置 `/` 补全同源，会话作用域，自动含用户级/项目级技能），失败时回退到 host 扫描路由；插入文本走框架输入机的 `inputActions.setDraft`（单一路径，撤销/草稿持久化自动处理）；最近/常用排序 + 拼音索引（`pinyin-pro`）在 client 侧生成，按技能缓存
+
+## 与官方 `/` 补全的关系（v0.4.0 起：增强，而非并列）
+
+**v0.2.0–0.3.4**：插件注册了一个独立的 `/` 候选源（`skill-fuzzy`），与官方 ui-skill 源**并列**——菜单里出现两个技能分组，搜索行为相互独立（冲突风险、视觉重复）。
+
+**v0.4.0 起**：**不再注册平行源**。改为给官方 `@deepseek-ai/dsh-client-ui-skill` 包的 candidates **打补丁**——其候选逻辑从 `skill.name.startsWith(query)`（前缀匹配）换成调用插件注入的全局函数 `window.__dshSkillPickerFuzzy`（fuzzysort 模糊 + pinyin-pro 拼音 + 最近/常用排行，与 ⚡ 面板同一套规则）。
+
+**效果**：官方「技能」分组**仍是唯一一个 `/` 技能列表**（官方规则全部保留：`userInvocable` 区分、菜单文案、排序基础），只是匹配行为被升级；插件不再产生第二列表。
+
+**Patch 部署姿势**（本机 `profiles/web/local/`，与其它 patch 插件同款）：
+1. 把官方包拷到 `profiles/web/local/dsh-client-ui-skill/`（`lib/client.js` 改 candidates 为 `window.__dshSkillPickerFuzzy` 优先，`startsWith` 兜底）
+2. profile package.json 加依赖 `"@deepseek-ai/dsh-client-ui-skill": "link:C:/Users/<user>/.dsh/profiles/web/local/dsh-client-ui-skill"`
+3. `pnpm install` 后重启 DSH
+
+> 官方 DSH 升级后（如 alpha.6），若 ui-skill 包变动：重拷新包覆盖 local 副本、重打补丁即可；插件本身逻辑不变。
 
 ## 更新日志
 
+- **v0.4.0**：**单列表模糊搜索**——不再注册独立 `/` 候选源，改为 patch 官方 ui-skill 的 candidates（模糊+拼音注入，官方列表是唯一来源，无并列列表、无搜索冲突）；实测 `/jiyi` → 官方「技能」组 backup-memory 排第一
 - **v0.3.4**：适配 DSH 0.1.2-alpha.5 —— 技能列表改用官方 `remote.skills` RPC（alpha.5 将 rc.x 的 `connection.api.skills` 改名），`/` 补全与 ⚡ 面板统一「官方 RPC → host 扫描兜底」；`dsh.client.inject` 声明 `dsh-client-ui-input-trigger`（alpha.5 装载器只给声明了提供者的插件暴露 `inputTriggers` 服务）。修复 alpha.5 下 `/` 模糊/拼音搜索失效（实测 `/jiyi` → backup-memory）
 - **v0.3.3**：兜底扫描对齐官方全部技能根——补扫 user-agents 层（`~/.agents/skills`，含 `DSH_AGENTS_HOME`），扫描顺序与官方 rank 一致（项目级优先于用户级）；走兜底时 ⚡ 面板显示「本地扫描」来源徽标便于排障（对应 issue #5）
 - **v0.3.2**：安装文档修正——实测三种安装方式并补网络特例（HTTPS 受限改 SSH、npm 新版本 24h 内被 minimumReleaseAge 门禁挡旧版的规避方法）
