@@ -38,6 +38,19 @@ function userSkillsDir() {
   return path.join(home, 'skills')
 }
 
+/**
+ * Resolve the user agents-home skills directory, mirroring the official
+ * provider's default (`$DSH_AGENTS_HOME` > `~/.agents`). This is the
+ * cross-tool `.agents` convention; the official `dsh-skill-filesystem` scans
+ * it as its `user-agents` root (rank 500), so the fallback must too — else
+ * the picker's list silently misses skills that DSH's own `/` completion
+ * shows (issue #5).
+ */
+function userAgentsSkillsDir() {
+  const agentsHome = process.env.DSH_AGENTS_HOME ?? path.join(os.homedir(), '.agents')
+  return path.join(agentsHome, 'skills')
+}
+
 /** Parse a SKILL.md frontmatter block into a key/value map (flat YAML subset). */
 function parseFrontmatter(content) {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
@@ -80,17 +93,21 @@ async function scanSkillsDirInto(map, dir) {
 }
 
 /**
- * Scan user-level plus (when a workspace cwd is known) project-level skill
- * directories, mirroring the official provider's roots. Never throws (a
- * missing user dir yields []).
+ * Scan the same roots the official `dsh-skill-filesystem` provider uses, so
+ * the fallback route stays in sync with what agents actually load:
+ * project `.dsh/skills` (rank 100) > project `.agents/skills` (200) >
+ * user `~/.dsh/skills` (400) > user `~/.agents/skills` (500). Scanned
+ * low-priority first, so later writes (higher priority) win in the map.
+ * Never throws (a missing dir yields []).
  * @param cwd - the active session's workspace root (undefined = user level only).
  */
 async function scanSkills(cwd) {
   const map = new Map()
+  await scanSkillsDirInto(map, userAgentsSkillsDir())
   await scanSkillsDirInto(map, userSkillsDir())
   if (typeof cwd === 'string' && cwd !== '') {
-    await scanSkillsDirInto(map, path.join(cwd, '.dsh', 'skills'))
     await scanSkillsDirInto(map, path.join(cwd, '.agents', 'skills'))
+    await scanSkillsDirInto(map, path.join(cwd, '.dsh', 'skills'))
   }
   return [...map.values()].sort((a, b) => a.name.localeCompare(b.name))
 }

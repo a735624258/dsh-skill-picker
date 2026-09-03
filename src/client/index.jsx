@@ -188,6 +188,26 @@ const statusStyle = {
   fontSize: '13px',
 }
 
+/** Lightweight source badge shown only when the list came from the host scan fallback (official API unavailable). */
+const sourceBadgeStyle = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  alignSelf: 'flex-start',
+  margin: '0 8px 8px',
+  padding: '2px 8px',
+  border: '1px solid rgba(255, 193, 7, 0.35)',
+  borderRadius: '999px',
+  background: 'rgba(255, 193, 7, 0.1)',
+  color: '#d9a520',
+  fontSize: '11px',
+  lineHeight: '16px',
+  flex: 'none',
+}
+
+const sourceBadgeTextStyle = {
+  fontFamily: 'var(--ds-font-family-code, ui-monospace, monospace)',
+}
+
 /** The picker's bolt glyph: DeepSeek palette gradient + slim stroke. */
 function BoltIcon() {
   return (
@@ -218,6 +238,7 @@ function SkillPickerButton(props) {
   const [open, setOpen] = useState(false)
   const [skills, setSkills] = useState(undefined)
   const [error, setError] = useState(undefined)
+  const [source, setSource] = useState(undefined)
   const [query, setQuery] = useState('')
   const [usage, setUsage] = useState(() => loadUsage())
   const [active, setActive] = useState(0)
@@ -232,18 +253,20 @@ function SkillPickerButton(props) {
       if (typeof props.listSkills === 'function' && props.session?.sessionId !== undefined) {
         const listed = await props.listSkills(props.session.sessionId)
         setSkills(Array.isArray(listed) ? listed : [])
+        setSource('official')
         return
       }
     } catch (cause) {
       console.warn('[dsh-skill-picker] official skills API failed, falling back to host route:', cause)
     }
-    // Fallback path: the host's own scan route (user + project level dirs).
+    // Fallback path: the host's own scan route (official provider roots).
     try {
       const cwd = typeof props.cwd === 'string' && props.cwd !== '' ? `?cwd=${encodeURIComponent(props.cwd)}` : ''
       const res = await fetch(`/dsh-skill-picker/skills${cwd}`, { headers: { accept: 'application/json' } })
       const json = await res.json()
       if (!json.ok) throw new Error(json.error || 'bad response')
       setSkills(Array.isArray(json.skills) ? json.skills : [])
+      setSource('host')
     } catch (cause) {
       setError(String(cause?.message ?? cause))
     }
@@ -374,38 +397,45 @@ function SkillPickerButton(props) {
           ) : skills === undefined ? (
             <div style={statusStyle}>加载中…</div>
           ) : (
-            <div style={listStyle}>
-              {filtered.length === 0 ? (
-                <div style={statusStyle}>没有匹配的技能</div>
-              ) : (
-                filtered.map((skill, index) => (
-                  <button
-                    key={skill.name}
-                    type="button"
-                    ref={(el) => {
-                      itemRefs.current[index] = el
-                    }}
-                    onClick={() => pick(skill.name)}
-                    onMouseEnter={(event) => {
-                      setActive(index)
-                      event.currentTarget.style.background = 'var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,0.12))'
-                    }}
-                    onMouseLeave={(event) => {
-                      event.currentTarget.style.background = 'transparent'
-                    }}
-                    style={{
-                      ...itemStyle,
-                      ...(index === active
-                        ? { background: 'var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,0.12))' }
-                        : {}),
-                    }}
-                  >
-                    <span style={nameStyle}>{`/${skill.name}`}</span>
-                    <span style={descStyle}>{skill.description ?? ''}</span>
-                  </button>
-                ))
+            <>
+              <div style={listStyle}>
+                {filtered.length === 0 ? (
+                  <div style={statusStyle}>没有匹配的技能</div>
+                ) : (
+                  filtered.map((skill, index) => (
+                    <button
+                      key={skill.name}
+                      type="button"
+                      ref={(el) => {
+                        itemRefs.current[index] = el
+                      }}
+                      onClick={() => pick(skill.name)}
+                      onMouseEnter={(event) => {
+                        setActive(index)
+                        event.currentTarget.style.background = 'var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,0.12))'
+                      }}
+                      onMouseLeave={(event) => {
+                        event.currentTarget.style.background = 'transparent'
+                      }}
+                      style={{
+                        ...itemStyle,
+                        ...(index === active
+                          ? { background: 'var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,0.12))' }
+                          : {}),
+                      }}
+                    >
+                      <span style={nameStyle}>{`/${skill.name}`}</span>
+                      <span style={descStyle}>{skill.description ?? ''}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+              {source === 'host' && (
+                <div style={sourceBadgeStyle} title="官方技能 API 不可用，列表来自本地目录扫描（与官方 / 补全同源）">
+                  <span style={sourceBadgeTextStyle}>本地扫描</span>
+                </div>
               )}
-            </div>
+            </>
           )}
         </div>
       )}

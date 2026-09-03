@@ -102,6 +102,7 @@ DSH 的 [dsh-tool-skill](https://github.com/deepseek-ai/deepseek-harness) 在 `a
 
 ## 更新日志
 
+- **v0.3.3**：兜底扫描对齐官方全部技能根——补扫 user-agents 层（`~/.agents/skills`，含 `DSH_AGENTS_HOME`），扫描顺序与官方 rank 一致（项目级优先于用户级）；走兜底时 ⚡ 面板显示「本地扫描」来源徽标便于排障（对应 issue #5）
 - **v0.3.2**：安装文档修正——实测三种安装方式并补网络特例（HTTPS 受限改 SSH、npm 新版本 24h 内被 minimumReleaseAge 门禁挡旧版的规避方法）
 - **v0.3.1**：README 顶部新增一键快速安装命令（`dsh plugin --profile web add dsh-skill-picker`）与 npm 版本/许可徽章
 - **v0.3.0**：拼音搜索——`/` 补全与 ⚡ 面板的搜索目标加入技能名/描述的拼音全拼（带空格+连打）与首字母索引，中文技能可拼音直搜（如 `ji yi` →「备份记忆」）
@@ -112,8 +113,9 @@ DSH 的 [dsh-tool-skill](https://github.com/deepseek-ai/deepseek-harness) 在 `a
 
 ## 兼容性与注意事项
 
-- **技能来源**：**优先走官方宿主 skills API**（`connection.api.skills.list`——与 DSH 内置 `/` 补全**完全同一个数据源**，会话作用域，自动覆盖用户级 `~/.dsh/skills`、项目级 `<workspace>/.dsh/skills`、`<workspace>/.agents/skills` 等全部官方目录）；官方 API 不可用时**自动回退**到内置扫描（用户级 + 项目级目录）。两条路都支持 `DSH_HOME` 环境变量。
-- **暂不扫描**：`~/.agents/skills` 与自定义技能目录（`customSkillDirs` 配置）——需要的话欢迎 PR。
+- **技能来源**：**优先走官方宿主 skills API**（`connection.api.skills.list`——与 DSH 内置 `/` 补全**完全同一个数据源**，会话作用域，自动覆盖全部官方目录）；官方 API 不可用时**自动回退**到内置扫描。两条路都支持 `DSH_HOME` 环境变量。
+- **兜底扫描范围**：与官方 `dsh-skill-filesystem` provider 的默认根完全同源——项目级 `<workspace>/.dsh/skills`、`<workspace>/.agents/skills`，用户级 `~/.dsh/skills`、`~/.agents/skills`（`$DSH_AGENTS_HOME` 可覆盖），同名时按官方 rank 项目级优先。走兜底时 ⚡ 面板底部显示「本地扫描」徽标。
+- **暂不支持**：自定义技能目录（官方 `customSkillDirs` 配置）——需要的话欢迎 PR。
 - **失败保护**：client 端用 `ctx.slots.inject`（等 `conversation.input.right` 插槽声明存在才注册，插槽缺失时静默跳过，不会拖垮启动）；host 端路由 try/catch，扫描目录不存在时返回空列表而非报错。
 - **依赖版本**：按 DSH `0.1.0-rc.6` API 编写（cordis 4 / web profile 标准装配）。如遇 DSH 大版本更新导致 API 变化，插件会以启动日志的插件错误提示为准，卸载 `dsh plugin --profile web remove dsh-skill-picker` 即可回退。
 
