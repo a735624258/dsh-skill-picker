@@ -445,6 +445,12 @@ function SkillPickerButton(props) {
 
 /** Apply the browser half: register the picker into the composer tool row. */
 export function apply(ctx) {
+  // Resolve the trigger pipeline service at apply scope (not inside an effect),
+  // exactly like the official ui-skill plugin does — in DSH 0.1.2-alpha.x the
+  // service lives in @deepseek-ai/dsh-client-ui-input-trigger and is only
+  // reachable from the plugin root context.
+  const inputTriggers = (typeof ctx.get === 'function' ? ctx.get('inputTriggers') : ctx.inputTriggers)
+
   // Primary skill source: the official host skills API (the exact RPC ui-skill
   // feeds DSH's own `/` completion with — session-scoped, all skill layers).
   const listSkills = async (sessionId) => {
@@ -581,7 +587,13 @@ export function apply(ctx) {
         return { text: `/${candidate.name} ` }
       },
     }
-    const unregister = ctx.inputTriggers.registerSource(source)
+    // inputTriggers is resolved at apply scope (see top of apply); fail loudly
+    // instead of silently dropping the fuzzy `/` source.
+    if (inputTriggers === undefined || typeof inputTriggers.registerSource !== 'function') {
+      console.warn('[dsh-skill-picker] inputTriggers service unavailable; fuzzy / completion disabled (⚡ panel still works)')
+      return
+    }
+    const unregister = inputTriggers.registerSource(source)
     return () => {
       unregister()
       namesCache.clear()
