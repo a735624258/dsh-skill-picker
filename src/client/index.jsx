@@ -451,12 +451,15 @@ export function apply(ctx) {
   // reachable from the plugin root context.
   const inputTriggers = (typeof ctx.get === 'function' ? ctx.get('inputTriggers') : ctx.inputTriggers)
 
-  // Primary skill source: the official host skills API (the exact RPC ui-skill
-  // feeds DSH's own `/` completion with — session-scoped, all skill layers).
+  // Primary skill source: the official host skills API. In DSH 0.1.2-alpha.x
+  // the RPC moved from `connection.api.skills` (rc.x) to `remote.skills`
+  // (used by the official ui-skill plugin); try both before falling back.
   const listSkills = async (sessionId) => {
-    const skills = ctx.connection?.api?.skills
+    const remoteSkills = ctx.remote?.skills
+    const connectionSkills = ctx.connection?.api?.skills
+    const skills = remoteSkills ?? connectionSkills
     if (skills === undefined || typeof skills.list !== 'function') {
-      throw new Error('connection.api.skills unavailable')
+      throw new Error('skills RPC unavailable (remote.skills / connection.api.skills)')
     }
     const controller = new AbortController()
     const { result } = await skills.list({ sessionId }, controller.signal)
@@ -475,6 +478,29 @@ export function apply(ctx) {
       currentCwd = typeof cwd === 'string' ? cwd : ''
     } catch {
       currentCwd = ''
+    }
+  }
+
+  // Host-route fallback: same scan the ⚡ panel uses (official provider roots).
+  const fetchHostSkills = async () => {
+    const cwd = typeof currentCwd === 'string' && currentCwd !== '' ? `?cwd=${encodeURIComponent(currentCwd)}` : ''
+    const res = await fetch(`/dsh-skill-picker/skills${cwd}`, { headers: { accept: 'application/json' } })
+    const json = await res.json()
+    if (!json.ok) throw new Error(json.error || 'bad response')
+    return Array.isArray(json.skills) ? json.skills : []
+  }
+
+  // Resolve skills by official RPC first, then the host scan route; never
+  // throws (returns [] when both fail) so `/` completion degrades gracefully.
+  const resolveSkills = async (sessionId) => {
+    try {
+      return await listSkills(sessionId)
+    } catch {
+      try {
+        return await fetchHostSkills()
+      } catch {
+        return []
+      }
     }
   }
   syncCwd()
@@ -513,7 +539,7 @@ export function apply(ctx) {
     }
     const refreshNames = async (sessionId) => {
       try {
-        const skills = await listSkills(sessionId)
+        const skills = await resolveSkills(sessionId)
         namesCache.set(sessionId, (Array.isArray(skills) ? skills : []).map((s) => s.name))
         notifyLexicon(sessionId)
       } catch {
@@ -526,7 +552,7 @@ export function apply(ctx) {
       name: 'skill-fuzzy',
       order: -10,
       async candidates(session, { query, signal }) {
-        const skills = await listSkills(session.sessionId)
+        const skills = await resolveSkills(session.sessionId)
         if (signal.aborted) return []
         namesCache.set(session.sessionId, skills.map((s) => s.name))
         notifyLexicon(session.sessionId)
