@@ -445,12 +445,6 @@ function SkillPickerButton(props) {
 
 /** Apply the browser half: register the picker into the composer tool row. */
 export function apply(ctx) {
-  // Resolve the trigger pipeline service at apply scope (not inside an effect),
-  // exactly like the official ui-skill plugin does — in DSH 0.1.2-alpha.x the
-  // service lives in @deepseek-ai/dsh-client-ui-input-trigger and is only
-  // reachable from the plugin root context.
-  const inputTriggers = (typeof ctx.get === 'function' ? ctx.get('inputTriggers') : ctx.inputTriggers)
-
   // Primary skill source: the official host skills API. In DSH 0.1.2-alpha.x
   // the RPC moved from `connection.api.skills` (rc.x) to `remote.skills`
   // (used by the official ui-skill plugin); try both before falling back.
@@ -481,28 +475,6 @@ export function apply(ctx) {
     }
   }
 
-  // Host-route fallback: same scan the ⚡ panel uses (official provider roots).
-  const fetchHostSkills = async () => {
-    const cwd = typeof currentCwd === 'string' && currentCwd !== '' ? `?cwd=${encodeURIComponent(currentCwd)}` : ''
-    const res = await fetch(`/dsh-skill-picker/skills${cwd}`, { headers: { accept: 'application/json' } })
-    const json = await res.json()
-    if (!json.ok) throw new Error(json.error || 'bad response')
-    return Array.isArray(json.skills) ? json.skills : []
-  }
-
-  // Resolve skills by official RPC first, then the host scan route; never
-  // throws (returns [] when both fail) so `/` completion degrades gracefully.
-  const resolveSkills = async (sessionId) => {
-    try {
-      return await listSkills(sessionId)
-    } catch {
-      try {
-        return await fetchHostSkills()
-      } catch {
-        return []
-      }
-    }
-  }
   syncCwd()
   const unsubscribe = ctx.sessions.list.subscribe(syncCwd)
   ctx.effect(() => {
@@ -523,107 +495,34 @@ export function apply(ctx) {
     }
   }, 'dsh-skill-picker: composer input slot')
 
-  // Fuzzy `/` completion source: negative order puts the skill group ABOVE
-  // the slash commands (command source sits at order 0), and beats the
-  // official ui-skill prefix source too — typing `/` matches name AND
-  // description anywhere, with usage ordering (same rule as the ⚡ panel).
+  // Fuzzy `/` completion: instead of registering a parallel source group
+  // (which would appear as a second list next to the official one), expose a
+  // global matcher that the patched official ui-skill candidates calls. The
+  // official group stays THE single `/` list; only its matching behaviour is
+  // upgraded to fuzzy + pinyin (name AND description, subsequence scoring).
   ctx.effect(() => {
-    // Skills cache per session, so both candidates and the lexicon (chip
-    // decoration of `/skill-name` in the draft) have the same names.
-    const namesCache = new Map() // sessionId -> string[] (skill names)
-    const lexiconListeners = new Map() // sessionId -> Set<listener>
-    const notifyLexicon = (sessionId) => {
-      for (const fn of [...(lexiconListeners.get(sessionId) ?? [])]) {
-        try { fn() } catch (err) { console.error('[dsh-skill-picker] lexicon listener failed:', err) }
-      }
+    // Mirror the ⚡ panel's `rankByUsage` semantics: recently/frequently used
+    // skills first, then the untouched rest — so usage history keeps working.
+    const fuzzyMatch = (skills, query = '') => {
+      const ordered = rankByUsage(skills, loadUsage())
+      const q = String(query).trim().toLowerCase()
+      if (q === '') return ordered
+      const targets = ordered.map((s) => ({
+        s,
+        search: `${s.name} ${s.description ?? ''} ${skillPinyinText(s.name, s.description ?? '')}`,
+      }))
+      const results = fuzzysort.go(q, targets, {
+        key: 'search',
+        limit: 12,
+        threshold: -10000,
+      })
+      return results
+        .filter((r) => r.score > 0)
+        .map((r) => r.obj.s)
     }
-    const refreshNames = async (sessionId) => {
-      try {
-        const skills = await resolveSkills(sessionId)
-        namesCache.set(sessionId, (Array.isArray(skills) ? skills : []).map((s) => s.name))
-        notifyLexicon(sessionId)
-      } catch {
-        /* keep last cache; lexicon stays empty until a successful fetch */
-      }
-    }
-
-    const source = {
-      trigger: '/',
-      name: 'skill-fuzzy',
-      order: -10,
-      async candidates(session, { query, signal }) {
-        const skills = await resolveSkills(session.sessionId)
-        if (signal.aborted) return []
-        namesCache.set(session.sessionId, skills.map((s) => s.name))
-        notifyLexicon(session.sessionId)
-        const ordered = rankByUsage(skills, loadUsage())
-        const q = String(query ?? '').trim().toLowerCase()
-        if (q === '') {
-          // Empty `/` surfaces ALL skills, usage first (same rule as ⚡ panel).
-          return ordered.map((s) => ({ name: s.name, description: s.description }))
-        }
-        // Typing uses fuzzysort (subsequence matching + relevance score) over
-        // name AND description, so partial/gappy queries and keywords match.
-        // The search string also carries the skill's pinyin forms (spaced,
-        // joined, initials — name and description), so `ji yi` / `jiyi` / `jy`
-        // match Chinese skill names & descriptions.
-        const targets = ordered.map((s) => ({
-          s,
-          search: `${s.name} ${s.description ?? ''} ${skillPinyinText(s.name, s.description ?? '')}`,
-        }))
-        const results = fuzzysort.go(q, targets, {
-          key: 'search',
-          limit: 12,
-          threshold: -10000,
-        })
-        return results
-          .filter((r) => r.score > 0)
-          .map((r) => ({ name: r.obj.s.name, description: r.obj.s.description }))
-      },
-      warm(session) {
-        refreshNames(session.sessionId)
-      },
-      lexicon(session) {
-        return namesCache.get(session.sessionId)
-      },
-      subscribeLexicon(session, listener) {
-        const key = session.sessionId
-        const set = lexiconListeners.get(key) ?? new Set()
-        set.add(listener)
-        lexiconListeners.set(key, set)
-        return () => {
-          const cur = lexiconListeners.get(key)
-          if (cur !== undefined) {
-            cur.delete(listener)
-            if (cur.size === 0) lexiconListeners.delete(key)
-          }
-        }
-      },
-      onPick({ candidate }) {
-        // Record usage (same rule as the ⚡ panel) so slash-picked skills
-        // rank higher the next time they open `/`.
-        try {
-          const usage = loadUsage()
-          const name = candidate.name
-          const next = { ...usage, [name]: { count: (usage[name]?.count ?? 0) + 1, lastUsed: Date.now() } }
-          saveUsage(next)
-        } catch {
-          /* usage recording is best-effort */
-        }
-        return { text: `/${candidate.name} ` }
-      },
-    }
-    // inputTriggers is resolved at apply scope (see top of apply); fail loudly
-    // instead of silently dropping the fuzzy `/` source.
-    if (inputTriggers === undefined || typeof inputTriggers.registerSource !== 'function') {
-      console.warn('[dsh-skill-picker] inputTriggers service unavailable; fuzzy / completion disabled (⚡ panel still works)')
-      return
-    }
-    const unregister = inputTriggers.registerSource(source)
+    window.__dshSkillPickerFuzzy = fuzzyMatch
     return () => {
-      unregister()
-      namesCache.clear()
-      lexiconListeners.clear()
+      if (window.__dshSkillPickerFuzzy === fuzzyMatch) delete window.__dshSkillPickerFuzzy
     }
-  }, 'dsh-skill-picker: fuzzy / source')
+  }, 'dsh-skill-picker: fuzzy matcher for official / source')
 }
