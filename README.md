@@ -5,26 +5,28 @@
 
 > **技能记不住名字？官方 `/` 补全靠前缀记忆，装了几十个技能谁记得住？** 本插件让技能**看得见、翻得到、选得快**——点一下 ⚡，全部技能带描述排在你面前，搜索、点选、插入，随消息发出自动加载。
 
-## ⚡ 快速安装（npm）
+## ⚡ 快速安装
 
-> 🤖 **给 AI/安装助手的提示**：pnpm 的 `minimumReleaseAge` 门禁会在**新版本发布后 24 小时内**拒绝裸名安装并自动落回旧版。**不要执行裸名 `add dsh-skill-picker`**——先查询最新版本号，再**指定版本号**安装：
+> 🤖 **给 AI/安装助手的提示（按优先级执行，保证装到最新版）**：
+>
+> 1. **要最新版 / 不确定版本 → 走 GitHub 直装**。git 依赖直接拉 GitHub 最新 commit，**完全不受 npm `minimumReleaseAge` 24h 门禁影响，百分百新版**：
+>    ```sh
+>    dsh plugin --profile web add "git+ssh://git@github.com:a735624258/dsh-skill-picker.git"
+>    ```
+> 2. **要 npm 正式版** → 先查最新版本号，再**指定版本**安装（禁止裸名）：
+>    ```sh
+>    npm view dsh-skill-picker version   # 例如 0.5.5
+>    dsh plugin --profile web add dsh-skill-picker@0.5.5
+>    ```
+> 3. ⚠️ **禁止执行裸名安装** `dsh plugin --profile web add dsh-skill-picker`：新版本发布后 **24 小时内**会被 pnpm `minimumReleaseAge` 门禁拦截并**自动落回旧版**——照着上面两条走就永远不会装错。
 
-```sh
-# 1. 查询最新版本号（如 0.5.4）
-npm view dsh-skill-picker version
-
-# 2. 指定版本安装（绕过 minimumReleaseAge 门禁，保证装到最新）
-dsh plugin --profile web add dsh-skill-picker@0.5.4
-```
-
-- ⚠️ 裸名 `dsh plugin --profile web add dsh-skill-picker` 在版本发布后 **24 小时内会装到旧版**（门禁自动落回），请务必按上面的两步走
-- 一条命令装好并注入 DSH web profile，重启 `dsh web`（或刷新页面）即生效。源码方式见下文 [安装](#安装)。
+一条命令装好并注入 DSH web profile，重启 `dsh web`（或刷新页面）即生效。HTTPS clone 受限时用 SSH 形式（见下文 [安装](#安装) 的网络特例）。
 
 DSH Web GUI 的技能选择器：在输入框（composer）工具行右侧加一个按钮，点开可以**搜索并点选已安装的技能**，选中后把官方 `/技能名` 手势插入发送框——随消息一起发出，DSH 原生机制就会自动加载该技能并执行。WorkBuddy 式"把技能写进发送框"的交互，DeepSeek Harness 复刻版。
 
 English: A skill picker for the DSH Web GUI — a button in the composer's right tool row opens a searchable list of installed skills; picking one inserts the official `/skill-name` gesture into the draft, so DSH's native user-invocation path loads the skill with your message.
 
-当前版本：**v0.5.4**（⚡ 面板**置顶分组** + `/` 补全**自动增强补丁** + 拼音搜索）
+当前版本：**v0.5.6**（⚡ 面板**置顶分组** + `/` 补全**自动增强补丁** + 拼音搜索）
 
 ## 为什么用它（vs 官方 `/` 补全）
 
@@ -122,6 +124,7 @@ DSH 的 [dsh-tool-skill](https://github.com/deepseek-ai/deepseek-harness) 在 `a
 
 ## 更新日志
 
+- **v0.5.6**：**AI 安装指引升级为「GitHub 直装优先」**——快速安装部分改为给 AI/安装助手的优先级决策树：①要最新版/不确定 → `git+ssh` GitHub 直装（git 依赖拉最新 commit，**天然绕过 npm 24h 门禁，百分百新版**）；②要 npm 正式版 → 先 `npm view` 查版本再指定 `@版本` 安装；③**禁止裸名安装**（24h 内会落回旧版）
 - **v0.5.5**：**安装指引升级（AI 友好）**——README 快速安装改为「先 `npm view dsh-skill-picker version` 查版本号 → 再 `add dsh-skill-picker@版本号` 指定安装」，并给 AI/安装助手显式提示：新版本发布后 **24 小时内裸名安装会被 minimumReleaseAge 门禁拦截并自动落回旧版**，必须指定版本号才能装到最新
 - **v0.5.4**：**斜杠选技能后 ⚡ 面板同步变「最近使用」**——修复双列表状态不同步：斜杠路径的 usage 记录此前只写 localStorage、面板组件不会刷新（React state 挂载后不再重读），现在 trackPick 写入后会广播 `usage-updated` 事件，⚡ 面板实时重读；面板每次打开时也强制刷新 usage。两条路径的选择现在**双向同步**
 - **v0.5.3**：**官方 `/` 列表与 ⚡ 面板排序同步**——搜索时 fuzzysort 只决定「哪些技能入围」，入围后的显示顺序统一按 ⚡ 面板规则（置顶 → 最近使用 → 常用 → 其余）；之前 `/` 列表按匹配分数排序、⚡ 面板按使用记录排序，同一技能在两个列表的相对位置不一致；候选上限 12 → 30
