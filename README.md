@@ -17,7 +17,7 @@ DSH Web GUI 的技能选择器：在输入框（composer）工具行右侧加一
 
 English: A skill picker for the DSH Web GUI — a button in the composer's right tool row opens a searchable list of installed skills; picking one inserts the official `/skill-name` gesture into the draft, so DSH's native user-invocation path loads the skill with your message.
 
-当前版本：**v0.5.1**（⚡ 面板**置顶分组** + `/` 补全**自动增强补丁** + 拼音搜索）
+当前版本：**v0.5.2**（⚡ 面板**置顶分组** + `/` 补全**自动增强补丁** + 拼音搜索）
 
 ## 为什么用它（vs 官方 `/` 补全）
 
@@ -112,6 +112,7 @@ DSH 的 [dsh-tool-skill](https://github.com/deepseek-ai/deepseek-harness) 在 `a
 
 ## 更新日志
 
+- **v0.5.2**：**官方 `/` 菜单选技能也记录使用记录**——自愈补丁新增第三个 patch（`pick-tracking`）：官方 ui-skill 的 `onPick` 会调用插件的 `window.__dshSkillPickerTrack`，斜杠选中的技能与 ⚡ 面板点选一样进入「最近使用」排序（之前只有按钮路径记账，斜杠路径不记账）
 - **v0.5.1**：**host 端自愈补丁**——每次 DSH 启动自动扫描所有 profile 的官方 `ui-skill` 包（local 副本或 npm 安装），自动应用两个升级补丁（`order: 2→-1` 技能组排到命令组之上；candidates 前缀匹配→模糊+拼音匹配），首次修改前自动备份 `.bak`，幂等且 DSH 升级覆盖官方包后自动重打。安装本插件即可获得官方 `/` 补全的完整增强，无需手动改文件（旧版 v0.4.0 的手动 patch 流程退役）
 - **v0.5.0**：**⚡ 面板置顶分组 + 修复 alpha.5 草稿丢失 bug**
   - 新增**手动置顶**：面板按「📌 置顶 → 🔥 最近使用 → 🗂️ 全部」分组展示（浏览时显示分组标题，搜索时折叠为置顶优先的单一列表）；每条技能右侧 📍 按钮一键置顶/取消，置顶顺序固定、持久化到 localStorage；`/` 补全候选同步置顶优先

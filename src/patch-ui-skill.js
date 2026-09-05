@@ -33,7 +33,10 @@ import path from 'node:path'
 /** Marker that the candidates patch is already in place. */
 const FUZZY_MARKER = '__dshSkillPickerFuzzy'
 
-/** The two self-healing patches, in application order. */
+/** Marker that the pick-tracking patch is already in place. */
+const TRACK_MARKER = '__dshSkillPickerTrack'
+
+/** The self-healing patches, in application order. */
 export const PATCHES = [
   {
     id: 'order',
@@ -58,6 +61,24 @@ export const PATCHES = [
           `${indent}// dsh-skill-picker patch: fuzzy+pinyin matcher (self-healed)\n` +
           `${indent}const matcher = typeof window.${FUZZY_MARKER} === "function" ? window.${FUZZY_MARKER}(skills, query) : skills.filter((skill) => skill.name.startsWith(query));\n` +
           `${indent}return matcher.map((skill) => ({`,
+      )
+    },
+  },
+  {
+    id: 'pick-tracking',
+    title: 'record usage when picked from the official / menu',
+    isApplied(text) {
+      return text.includes(TRACK_MARKER)
+    },
+    apply(text) {
+      return text.replace(
+        /(\t*)onPick\(\{ candidate \}\) \{\n(\t*)return \{ text: `\/\$\{candidate\.name\} ` \};\n(\t*)\}/,
+        (match, i1, i2, i3) =>
+          `${i1}onPick({ candidate }) {\n` +
+          `${i2}  // dsh-skill-picker patch: usage tracking (self-healed)\n` +
+          `${i2}  try { window.${TRACK_MARKER}?.(candidate.name) } catch { /* best-effort */ }\n` +
+          `${i2}  return { text: \`/\${candidate.name} \` };\n` +
+          `${i3}}`,
       )
     },
   },

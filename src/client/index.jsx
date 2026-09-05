@@ -649,8 +649,17 @@ export function apply(ctx) {
         .map((r) => r.obj.s)
     }
     window.__dshSkillPickerFuzzy = fuzzyMatch
+    // Usage tracking for picks made from the official `/` menu: the patched
+    // ui-skill onPick calls this so a slash pick ranks like a bolt-panel pick.
+    const trackPick = (name) => {
+      const usage = loadUsage()
+      const nextUsage = { ...usage, [name]: { count: (usage[name]?.count ?? 0) + 1, lastUsed: Date.now() } }
+      saveUsage(nextUsage)
+    }
+    window.__dshSkillPickerTrack = trackPick
     return () => {
       if (window.__dshSkillPickerFuzzy === fuzzyMatch) delete window.__dshSkillPickerFuzzy
+      if (window.__dshSkillPickerTrack === trackPick) delete window.__dshSkillPickerTrack
     }
   }, 'dsh-skill-picker: fuzzy matcher for official / source')
 }
