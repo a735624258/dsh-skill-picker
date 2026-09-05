@@ -17,7 +17,7 @@ DSH Web GUI 的技能选择器：在输入框（composer）工具行右侧加一
 
 English: A skill picker for the DSH Web GUI — a button in the composer's right tool row opens a searchable list of installed skills; picking one inserts the official `/skill-name` gesture into the draft, so DSH's native user-invocation path loads the skill with your message.
 
-当前版本：**v0.5.0**（⚡ 面板**置顶分组** + 拼音搜索 + 单列表模糊补全）
+当前版本：**v0.5.1**（⚡ 面板**置顶分组** + `/` 补全**自动增强补丁** + 拼音搜索）
 
 ## 为什么用它（vs 官方 `/` 补全）
 
@@ -104,19 +104,15 @@ DSH 的 [dsh-tool-skill](https://github.com/deepseek-ai/deepseek-harness) 在 `a
 
 **v0.2.0–0.3.4**：插件注册了一个独立的 `/` 候选源（`skill-fuzzy`），与官方 ui-skill 源**并列**——菜单里出现两个技能分组，搜索行为相互独立（冲突风险、视觉重复）。
 
-**v0.4.0 起**：**不再注册平行源**。改为给官方 `@deepseek-ai/dsh-client-ui-skill` 包的 candidates **打补丁**——其候选逻辑从 `skill.name.startsWith(query)`（前缀匹配）换成调用插件注入的全局函数 `window.__dshSkillPickerFuzzy`（fuzzysort 模糊 + pinyin-pro 拼音 + 最近/常用排行，与 ⚡ 面板同一套规则）。
+**v0.4.0 起**：**不再注册平行源**。改为给官方 `@deepseek-ai/dsh-client-ui-skill` 包的 candidates **打补丁**——其候选逻辑从 `skill.name.startsWith(query)`（前缀匹配）换成调用插件注入的全局函数 `window.__dshSkillPickerFuzzy`（fuzzysort 模糊 + pinyin-pro 拼音 + 最近/常用排行，与 ⚡ 面板同一套规则）。**v0.5.1 起，补丁由 host 端每次启动自动应用**（另加 `order: 2→-1`：技能组排在命令组之上），首次修改前自动备份 `.bak`，DSH 升级覆盖官方包后自动重打——**安装插件即生效，无需手动操作**。
 
-**效果**：官方「技能」分组**仍是唯一一个 `/` 技能列表**（官方规则全部保留：`userInvocable` 区分、菜单文案、排序基础），只是匹配行为被升级；插件不再产生第二列表。
+**效果**：官方「技能」分组**仍是唯一一个 `/` 技能列表**（官方规则全部保留：`userInvocable` 区分、菜单文案、排序基础），只是匹配行为被升级、分组排序被前移；插件不再产生第二列表。
 
-**Patch 部署姿势**（本机 `profiles/web/local/`，与其它 patch 插件同款）：
-1. 把官方包拷到 `profiles/web/local/dsh-client-ui-skill/`（`lib/client.js` 改 candidates 为 `window.__dshSkillPickerFuzzy` 优先，`startsWith` 兜底）
-2. profile package.json 加依赖 `"@deepseek-ai/dsh-client-ui-skill": "link:C:/Users/<user>/.dsh/profiles/web/local/dsh-client-ui-skill"`
-3. `pnpm install` 后重启 DSH
-
-> 官方 DSH 升级后（如 alpha.6），若 ui-skill 包变动：重拷新包覆盖 local 副本、重打补丁即可；插件本身逻辑不变。
+> 手动兜底（旧流程，一般不需要）：把官方包拷到 `profiles/web/local/dsh-client-ui-skill/`（`lib/client.js` 改 candidates 为 `window.__dshSkillPickerFuzzy` 优先、`order` 改 `-1`），profile package.json 加依赖 `"@deepseek-ai/dsh-client-ui-skill": "link:C:/Users/<user>/.dsh/profiles/web/local/dsh-client-ui-skill"`，`pnpm install` 后重启 DSH。自动补丁对 local 副本与 npm 安装两种形态都适用，升级后自愈，无需重复手动操作。
 
 ## 更新日志
 
+- **v0.5.1**：**host 端自愈补丁**——每次 DSH 启动自动扫描所有 profile 的官方 `ui-skill` 包（local 副本或 npm 安装），自动应用两个升级补丁（`order: 2→-1` 技能组排到命令组之上；candidates 前缀匹配→模糊+拼音匹配），首次修改前自动备份 `.bak`，幂等且 DSH 升级覆盖官方包后自动重打。安装本插件即可获得官方 `/` 补全的完整增强，无需手动改文件（旧版 v0.4.0 的手动 patch 流程退役）
 - **v0.5.0**：**⚡ 面板置顶分组 + 修复 alpha.5 草稿丢失 bug**
   - 新增**手动置顶**：面板按「📌 置顶 → 🔥 最近使用 → 🗂️ 全部」分组展示（浏览时显示分组标题，搜索时折叠为置顶优先的单一列表）；每条技能右侧 📍 按钮一键置顶/取消，置顶顺序固定、持久化到 localStorage；`/` 补全候选同步置顶优先
   - **修复严重 bug**：DSH alpha.5 重构后 `conversation.input.right` 插槽不再提供 `input` 快照，点选技能时误走「事件回调内调用 `useInput` hook」分支（违反 React 规则，抛错被吞 → 草稿读空 → **覆盖用户已输入的内容**）。改为渲染期把最新草稿同步到 ref，点击回调只读 ref——追加永远基于真实草稿

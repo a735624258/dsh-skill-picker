@@ -22,6 +22,8 @@ import { readFile, readdir } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
+import { healUiSkillPatches } from './patch-ui-skill.js'
+
 /** Required services: the route registry and the prompt band. */
 export const inject = ['webServer', 'systemPrompt']
 
@@ -138,4 +140,19 @@ export function apply(ctx) {
     order: SECTION_ORDER,
     text: SKILL_PICKER_GUIDANCE,
   }), 'dsh-skill-picker: prompt section')
+
+  // Self-healing patch for the official ui-skill package: keeps the `/`
+  // completion's skill group ordered above commands and its matching fuzzy
+  // across DSH upgrades. Runs once per boot; idempotent, backed up, and
+  // never allowed to take the host down.
+  ctx.effect(() => {
+    healUiSkillPatches().then((report) => {
+      if (report.files.length > 0) {
+        console.log('[dsh-skill-picker] ui-skill patch report:', JSON.stringify(report))
+      }
+    }).catch((error) => {
+      console.warn('[dsh-skill-picker] ui-skill patch failed:', error)
+    })
+    return () => {}
+  }, 'dsh-skill-picker: ui-skill self-heal patch')
 }
