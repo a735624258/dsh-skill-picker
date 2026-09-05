@@ -635,18 +635,24 @@ export function apply(ctx) {
       const ordered = groupByPinned(skills, loadUsage(), loadPinned()).flatMap((group) => group.items)
       const q = String(query).trim().toLowerCase()
       if (q === '') return ordered
+      // Rank by the ⚡ panel's exact order (pinned → recent → frequent → rest)
+      // so both lists stay in sync: fuzzysort only decides WHO matches, not
+      // the display order. Without this, a slash query re-sorts matches by
+      // match score and the two menus diverge for the same skill.
+      const rankByName = new Map(ordered.map((skill, index) => [skill.name, index]))
       const targets = ordered.map((s) => ({
         s,
         search: `${s.name} ${s.description ?? ''} ${skillPinyinText(s.name, s.description ?? '')}`,
       }))
       const results = fuzzysort.go(q, targets, {
         key: 'search',
-        limit: 12,
+        limit: 30,
         threshold: -10000,
       })
       return results
         .filter((r) => r.score > 0)
         .map((r) => r.obj.s)
+        .sort((a, b) => (rankByName.get(a.name) ?? 0) - (rankByName.get(b.name) ?? 0))
     }
     window.__dshSkillPickerFuzzy = fuzzyMatch
     // Usage tracking for picks made from the official `/` menu: the patched
