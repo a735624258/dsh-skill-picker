@@ -294,6 +294,16 @@ function SkillPickerButton(props) {
   const boxRef = useRef(null)
   const itemRefs = useRef([])
 
+  // The usage store is shared with the official `/` menu: picks made there go
+  // through window.__dshSkillPickerTrack (localStorage only). Refresh this
+  // panel's state from storage whenever that event fires, so a slash pick
+  // shows up as "recently used" here too — not just in the slash list.
+  useEffect(() => {
+    const onUsageUpdated = () => setUsage(loadUsage())
+    window.addEventListener('dsh-skill-picker:usage-updated', onUsageUpdated)
+    return () => window.removeEventListener('dsh-skill-picker:usage-updated', onUsageUpdated)
+  }, [])
+
   // Latest draft mirror: `useInput` is a selector hook and may only be called
   // during render, while the pick handler runs from a click callback. Sync the
   // store's current draft into a ref here (render time), so the click handler
@@ -339,7 +349,10 @@ function SkillPickerButton(props) {
   }, [skills, error, props.listSkills, props.session, props.cwd])
 
   const toggle = () => {
-    if (!open) void load()
+    if (!open) {
+      setUsage(loadUsage())
+      void load()
+    }
     setOpen(!open)
   }
 
@@ -661,6 +674,14 @@ export function apply(ctx) {
       const usage = loadUsage()
       const nextUsage = { ...usage, [name]: { count: (usage[name]?.count ?? 0) + 1, lastUsed: Date.now() } }
       saveUsage(nextUsage)
+      // Notify the bolt panel (and any other listeners) to re-read storage so
+      // a slash pick ranks as "recently used" there too, not only in the
+      // official / menu.
+      try {
+        window.dispatchEvent(new CustomEvent('dsh-skill-picker:usage-updated'))
+      } catch {
+        /* best-effort */
+      }
     }
     window.__dshSkillPickerTrack = trackPick
     return () => {
