@@ -15,7 +15,7 @@
  * @module dsh-skill-picker/client
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import fuzzysort from 'fuzzysort'
 import { pinyin } from 'pinyin-pro'
 
@@ -24,6 +24,30 @@ export const inject = ['slots', 'connection', 'sessions', 'inputTriggers']
 
 /** localStorage key for the picker's per-browser usage history. */
 const USAGE_KEY = 'dsh-skill-picker:usage'
+
+/** localStorage key for the user's manually pinned skills (ordered array of names). */
+const PINNED_KEY = 'dsh-skill-picker:pinned'
+
+/** Read the pinned list {string[]}; never throws. */
+function loadPinned() {
+  try {
+    const raw = localStorage.getItem(PINNED_KEY)
+    if (raw === null) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed.filter((name) => typeof name === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+/** Persist the pinned list; never throws. */
+function savePinned(pinned) {
+  try {
+    localStorage.setItem(PINNED_KEY, JSON.stringify(pinned))
+  } catch {
+    /* storage unavailable — pinning just won't persist */
+  }
+}
 
 /** Read the usage history {name: {count, lastUsed}}; never throws. */
 function loadUsage() {
@@ -63,6 +87,30 @@ function rankByUsage(skills, usage) {
     if (ca !== cb) return cb - ca
     return a.name.localeCompare(b.name)
   })
+}
+
+/**
+ * Grouped ordering for the ⚡ panel: pinned (manual, pinned order) first,
+ * then recently/frequently used (usage order), then the untouched rest (by
+ * name). Groups with no members are dropped. A fresh structure is returned;
+ * the input arrays are untouched.
+ */
+function groupByPinned(skills, usage, pinned) {
+  const pinnedSet = new Set(pinned)
+  const pinnedList = pinned.map((name) => skills.find((s) => s.name === name)).filter(Boolean)
+  const ranked = rankByUsage(skills, usage)
+  const recent = []
+  const rest = []
+  for (const skill of ranked) {
+    if (pinnedSet.has(skill.name)) continue
+    if (usage[skill.name] !== undefined) recent.push(skill)
+    else rest.push(skill)
+  }
+  return [
+    { title: '📌 置顶', items: pinnedList },
+    { title: '🔥 最近使用', items: recent },
+    { title: '🗂️ 全部', items: rest },
+  ].filter((group) => group.items.length > 0)
 }
 
 /**
@@ -241,9 +289,27 @@ function SkillPickerButton(props) {
   const [source, setSource] = useState(undefined)
   const [query, setQuery] = useState('')
   const [usage, setUsage] = useState(() => loadUsage())
+  const [pinned, setPinned] = useState(() => loadPinned())
   const [active, setActive] = useState(0)
   const boxRef = useRef(null)
   const itemRefs = useRef([])
+
+  // Latest draft mirror: `useInput` is a selector hook and may only be called
+  // during render, while the pick handler runs from a click callback. Sync the
+  // store's current draft into a ref here (render time), so the click handler
+  // appends onto the REAL current draft instead of a stale snapshot. The
+  // owner-provided `input` snapshot is a secondary fallback only.
+  const draftRef = useRef('')
+  if (typeof props.useInput === 'function') {
+    try {
+      const state = props.useInput((s) => s)
+      if (state !== undefined && typeof state.draft === 'string') draftRef.current = state.draft
+    } catch {
+      /* keep the last known draft */
+    }
+  } else if (props.input !== undefined && typeof props.input.draft === 'string') {
+    draftRef.current = props.input.draft
+  }
 
   const load = useCallback(async () => {
     if (skills !== undefined || error !== undefined) return
@@ -278,18 +344,10 @@ function SkillPickerButton(props) {
   }
 
   const pick = (name) => {
-    // Draft source: owner InputZone snapshot first, framework hook second.
-    let draft = ''
-    try {
-      if (props.input !== undefined && typeof props.input.draft === 'string') {
-        draft = props.input.draft
-      } else if (typeof props.useInput === 'function') {
-        const state = props.useInput((s) => s)
-        if (state !== undefined && typeof state.draft === 'string') draft = state.draft
-      }
-    } catch (cause) {
-      console.error('[dsh-skill-picker] reading draft failed:', cause)
-    }
+    // Draft source: the render-time mirror of the live input store (see the
+    // `draftRef` sync above). Appending onto anything else risks overwriting
+    // the user's typed draft with a stale snapshot.
+    const draft = draftRef.current
     const separator = draft === '' || draft.endsWith(' ') || draft.endsWith('\n') ? '' : ' '
     const next = `${draft}${separator}/${name} `
     try {
@@ -311,6 +369,12 @@ function SkillPickerButton(props) {
     setQuery('')
   }
 
+  const togglePin = (name) => {
+    const next = pinned.includes(name) ? pinned.filter((n) => n !== name) : [...pinned, name]
+    setPinned(next)
+    savePinned(next)
+  }
+
   // Close on outside pointer-down (the shell's menu convention).
   useEffect(() => {
     if (!open) return
@@ -321,11 +385,12 @@ function SkillPickerButton(props) {
     return () => document.removeEventListener('mousedown', onDown)
   }, [open])
 
-  // Usage ordering: last picked first, then most frequent, then by name
-  // (shared with the `/` completion — one rule everywhere).
-  const ordered = rankByUsage(skills ?? [], usage)
+  // Grouped ordering: pinned first (manual), then usage-ranked (recent then
+  // frequent then untouched by name). Shared rule with the `/` completion.
+  const groups = groupByPinned(skills ?? [], usage, pinned)
+  const flat = groups.flatMap((group) => group.items)
 
-  const filtered = ordered
+  const filtered = flat
     .filter((skill) => {
       const q = query.trim().toLowerCase()
       if (q === '') return true
@@ -336,6 +401,11 @@ function SkillPickerButton(props) {
       )
     })
     .slice(0, 60)
+
+  // Group titles show only while browsing (no query); searching collapses the
+  // list into one flat, pinned-first result set.
+  const showTitles = query.trim() === '' && groups.length > 1
+  const filteredNames = new Set(filtered.map((skill) => skill.name))
 
   // Keyboard navigation (#1): reset highlight when the query changes, keep it
   // in range when the result list shrinks, and keep the highlighted row visible.
@@ -401,8 +471,9 @@ function SkillPickerButton(props) {
               <div style={listStyle}>
                 {filtered.length === 0 ? (
                   <div style={statusStyle}>没有匹配的技能</div>
-                ) : (
-                  filtered.map((skill, index) => (
+                ) : (() => {
+                  let itemIndex = 0
+                  const renderItem = (skill, index) => (
                     <button
                       key={skill.name}
                       type="button"
@@ -419,16 +490,73 @@ function SkillPickerButton(props) {
                       }}
                       style={{
                         ...itemStyle,
+                        flexDirection: 'row',
+                        alignItems: 'center',
                         ...(index === active
                           ? { background: 'var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,0.12))' }
                           : {}),
                       }}
                     >
-                      <span style={nameStyle}>{`/${skill.name}`}</span>
-                      <span style={descStyle}>{skill.description ?? ''}</span>
+                      <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '2px', flex: '1', minWidth: '0' }}>
+                        <span style={nameStyle}>{`/${skill.name}`}</span>
+                        <span style={descStyle}>{skill.description ?? ''}</span>
+                      </span>
+                      <span
+                        role="button"
+                        tabIndex={-1}
+                        title={pinned.includes(skill.name) ? '取消置顶' : '置顶到列表顶部'}
+                        aria-label={pinned.includes(skill.name) ? '取消置顶' : '置顶'}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          togglePin(skill.name)
+                        }}
+                        style={{
+                          flex: 'none',
+                          marginLeft: '6px',
+                          padding: '2px 4px',
+                          borderRadius: '6px',
+                          fontSize: '12px',
+                          lineHeight: '16px',
+                          cursor: 'pointer',
+                          color: pinned.includes(skill.name)
+                            ? 'var(--dsw-alias-label-primary-bluish, #4cc9f0)'
+                            : 'var(--dsw-alias-label-tertiary, #8a94a6)',
+                          opacity: pinned.includes(skill.name) ? 1 : 0.55,
+                          userSelect: 'none',
+                        }}
+                      >
+                        {pinned.includes(skill.name) ? '📌' : '📍'}
+                      </span>
                     </button>
-                  ))
-                )}
+                  )
+                  if (!showTitles) {
+                    return filtered.map((skill) => renderItem(skill, itemIndex++))
+                  }
+                  return groups.map((group) => {
+                    const items = group.items.filter((skill) => filteredNames.has(skill.name))
+                    if (items.length === 0) return null
+                    return (
+                      <Fragment key={group.title}>
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            padding: '6px 10px 2px',
+                            color: 'var(--dsw-alias-label-tertiary, #8a94a6)',
+                            fontSize: '11px',
+                            fontWeight: 600,
+                            letterSpacing: '0.04em',
+                          }}
+                        >
+                          <span>{group.title}</span>
+                          <span style={{ opacity: 0.7 }}>{items.length}</span>
+                        </div>
+                        {items.map((skill) => renderItem(skill, itemIndex++))}
+                      </Fragment>
+                    )
+                  })
+                })()}
               </div>
               {source === 'host' && (
                 <div style={sourceBadgeStyle} title="官方技能 API 不可用，列表来自本地目录扫描（与官方 / 补全同源）">
@@ -501,10 +629,10 @@ export function apply(ctx) {
   // official group stays THE single `/` list; only its matching behaviour is
   // upgraded to fuzzy + pinyin (name AND description, subsequence scoring).
   ctx.effect(() => {
-    // Mirror the ⚡ panel's `rankByUsage` semantics: recently/frequently used
-    // skills first, then the untouched rest — so usage history keeps working.
+    // Mirror the ⚡ panel's ordering: pinned first, then recently/frequently
+    // used skills, then the untouched rest — so both stay in sync.
     const fuzzyMatch = (skills, query = '') => {
-      const ordered = rankByUsage(skills, loadUsage())
+      const ordered = groupByPinned(skills, loadUsage(), loadPinned()).flatMap((group) => group.items)
       const q = String(query).trim().toLowerCase()
       if (q === '') return ordered
       const targets = ordered.map((s) => ({
