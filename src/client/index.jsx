@@ -680,10 +680,17 @@ export function apply(ctx) {
         limit: 30,
         threshold: -10000,
       })
+      // Relevance first (name-startsWith > name-contains > description >
+      // pinyin), then the ⚡ panel's pinned/usage order as the tiebreak —
+      // the shared rule with the bolt panel, so a name-exact skill like
+      // svg-diagram for "svg" surfaces above merely-recently-used ones.
       return results
         .filter((r) => r.score > 0)
         .map((r) => r.obj.s)
-        .sort((a, b) => (rankByName.get(a.name) ?? 0) - (rankByName.get(b.name) ?? 0))
+        // Drop pure subsequence noise (dispersed letters that never form an
+        // actual substring): keep only name/description/pinyin hits.
+        .filter((s) => matchRank(s, q) < 4)
+        .sort((a, b) => matchRank(a, q) - matchRank(b, q) || (rankByName.get(a.name) ?? 0) - (rankByName.get(b.name) ?? 0))
     }
     window.__dshSkillPickerFuzzy = fuzzyMatch
     // Usage tracking for picks made from the official `/` menu: the patched
