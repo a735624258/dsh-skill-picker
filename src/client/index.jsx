@@ -145,6 +145,25 @@ function skillPinyinText(name, description = '') {
   return text
 }
 
+/**
+ * Search relevance rank for the ⚡ panel (and any exact-match filtering):
+ * 0 = name starts with the query, 1 = name contains it, 2 = description
+ * contains it, 3 = pinyin text contains it, 4 = no match (filtered out).
+ * Lower is more relevant; the panel keeps the pinned/usage order as the
+ * tiebreak within the same rank, so a name-exact skill like svg-diagram
+ * surfaces above merely-used-but-vaguely-matching ones.
+ */
+function matchRank(skill, q) {
+  const name = skill.name.toLowerCase()
+  const desc = String(skill.description ?? '').toLowerCase()
+  const py = skillPinyinText(skill.name, skill.description ?? '').toLowerCase()
+  if (name.startsWith(q)) return 0
+  if (name.includes(q)) return 1
+  if (desc.includes(q)) return 2
+  if (py.includes(q)) return 3
+  return 4
+}
+
 /** Row height matches the resident chrome (access mode, plan, attach, model). */
 const buttonStyle = {
   display: 'inline-flex',
@@ -403,17 +422,16 @@ function SkillPickerButton(props) {
   const groups = groupByPinned(skills ?? [], usage, pinned)
   const flat = groups.flatMap((group) => group.items)
 
-  const filtered = flat
-    .filter((skill) => {
-      const q = query.trim().toLowerCase()
-      if (q === '') return true
-      return (
-        skill.name.toLowerCase().includes(q) ||
-        String(skill.description ?? '').toLowerCase().includes(q) ||
-        skillPinyinText(skill.name, skill.description ?? '').toLowerCase().includes(q)
-      )
-    })
-    .slice(0, 60)
+  const filtered = (() => {
+    const q = query.trim().toLowerCase()
+    if (q === '') return flat.slice(0, 60)
+    return flat
+      .map((skill, index) => ({ skill, index, score: matchRank(skill, q) }))
+      .filter((x) => x.score < 4)
+      .sort((a, b) => a.score - b.score || a.index - b.index)
+      .slice(0, 60)
+      .map((x) => x.skill)
+  })()
 
   // Group titles show only while browsing (no query); searching collapses the
   // list into one flat, pinned-first result set.
