@@ -50,18 +50,32 @@ export const PATCHES = [
   },
   {
     id: 'fuzzy-candidates',
-    title: 'prefix matcher → fuzzy+pinyin matcher',
+    title: 'prefix/rank matcher → fuzzy+pinyin matcher',
     isApplied(text) {
       return text.includes(FUZZY_MARKER)
     },
     apply(text) {
-      return text.replace(
-        /(\t*)return skills\.filter\(\(skill\) => skill\.name\.startsWith\(query\)\)\.map\(\(skill\) => \(\{/,
-        (match, indent) =>
+      // 官方实现随版本变过两次，两个形态都要认（2026-09-11 实测）：
+      //   0.1.2-alpha.x : return skills.filter((skill) => skill.name.startsWith(query)).map(...)
+      //   0.1.5-rc.x    : return (0, _xxx.rankByName)(skills, query).map(...)   ← 改成 async candidates
+      // 每组捕获：$1 = 缩进，$2 = 官方那一段表达式（原样保留做 fallback）。
+      const ANCHORS = [
+        /(\t*)return (\(0, [\w.$]+\.rankByName\)\(skills, query\)|rankByName\(skills, query\))\.map\(\(skill\) => \(\{/,
+        /(\t*)return (skills\.filter\(\(skill\) => skill\.name\.startsWith\(query\)\))\.map\(\(skill\) => \(\{/,
+      ]
+      for (const re of ANCHORS) {
+        const m = text.match(re)
+        if (!m) continue
+        const [, indent, official] = m
+        return text.replace(
+          re,
           `${indent}// dsh-skill-picker patch: fuzzy+pinyin matcher (self-healed)\n` +
-          `${indent}const matcher = typeof window.${FUZZY_MARKER} === "function" ? window.${FUZZY_MARKER}(skills, query) : skills.filter((skill) => skill.name.startsWith(query));\n` +
-          `${indent}return matcher.map((skill) => ({`,
-      )
+            `${indent}const officialMatcher = ${official};\n` +
+            `${indent}const matcher = typeof window.${FUZZY_MARKER} === "function" ? window.${FUZZY_MARKER}(skills, query) : officialMatcher;\n` +
+            `${indent}return matcher.map((skill) => ({`,
+        )
+      }
+      return text
     },
   },
   {
