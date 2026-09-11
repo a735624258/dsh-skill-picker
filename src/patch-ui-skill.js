@@ -30,6 +30,8 @@ import { readFile, writeFile, copyFile, readdir, access } from 'node:fs/promises
 import os from 'node:os'
 import path from 'node:path'
 
+import { isDirectoryEntry } from './dir-entry.js'
+
 /** Marker that the candidates patch is already in place. */
 const FUZZY_MARKER = '__dshSkillPickerFuzzy'
 
@@ -121,7 +123,9 @@ export async function uiSkillClientPaths() {
   const seen = new Set()
   const found = []
   for (const entry of profiles) {
-    if (!entry.isDirectory()) continue
+    // A profile directory may itself be reached through a link; follow it
+    // instead of relying on the lstat-based dirent (see dir-entry.js).
+    if (!(await isDirectoryEntry(profilesDir, entry))) continue
     const candidates = [
       path.join(profilesDir, entry.name, 'local', 'dsh-client-ui-skill', 'lib', 'client.js'),
       path.join(profilesDir, entry.name, 'node_modules', '@deepseek-ai', 'dsh-client-ui-skill', 'lib', 'client.js'),

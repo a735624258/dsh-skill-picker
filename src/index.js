@@ -22,6 +22,7 @@ import { readFile, readdir } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
+import { isDirectoryEntry } from './dir-entry.js'
 import { healUiSkillPatches } from './patch-ui-skill.js'
 
 /** Required services: the route registry and the prompt band. */
@@ -76,7 +77,9 @@ async function scanSkillsDirInto(map, dir) {
     return
   }
   for (const entry of entries) {
-    if (!entry.isDirectory()) continue
+    // Links are followed (`isDirectoryEntry`), so a skill may live behind a
+    // symlink/junction — e.g. `~/.agents/skills/neat` → another repo (#6).
+    if (!(await isDirectoryEntry(dir, entry))) continue
     const skillDir = path.join(dir, entry.name)
     let content
     try {
@@ -102,8 +105,9 @@ async function scanSkillsDirInto(map, dir) {
  * low-priority first, so later writes (higher priority) win in the map.
  * Never throws (a missing dir yields []).
  * @param cwd - the active session's workspace root (undefined = user level only).
+ * @returns the deduplicated, name-sorted skill list.
  */
-async function scanSkills(cwd) {
+export async function scanSkills(cwd) {
   const map = new Map()
   await scanSkillsDirInto(map, userAgentsSkillsDir())
   await scanSkillsDirInto(map, userSkillsDir())

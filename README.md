@@ -124,6 +124,7 @@ DSH 的 [dsh-tool-skill](https://github.com/deepseek-ai/deepseek-harness) 在 `a
 
 ## 更新日志
 
+- **v0.5.9**：**修复符号链接 / Junction 型技能查不到（对应 issue #6）**——扫描技能目录时 `readdir` 的 `Dirent` 走的是 lstat 语义：Windows 下符号链接**和 Junction** 都报告 `isDirectory() === false` / `isSymbolicLink() === true`，于是链接型技能（如 `~/.agents/skills/neat` → `D:\repos\icraft-toolkit\skills\neat`）在第 79 行的目录过滤里被静默 `continue` 掉。现在链接条目改用 `stat`（跟随链接）判定真实类型：链接型技能与普通目录**完全一视同仁**，断链或指向普通文件的链接安全跳过（不再抛错、也不占用列表）。四个扫描根（`~/.agents/skills`、`~/.dsh/skills`、项目级 `.agents/skills` / `.dsh/skills`）与 profile 枚举路径全部受益；新增 `npm test`（`node --test`）回归用例：普通目录、链接目录、链接+普通混排、断链、无 `SKILL.md` 的链接、项目级链接技能
 - **v0.5.7**：**搜索结果按匹配相关度排序**——⚡ 面板与 `/` 补全统一：名字开头匹配 > 名字包含 > 描述 > 拼音，置顶/最近使用只做同级次序；同时过滤掉纯粹"字母分散"的子序列噪音（如搜 `svg` 不再混入 deepseek/openviking 等恰好含 s-v-g 分散字母的技能）。`svg` → svg-diagram 稳居第一
 - **v0.5.6**：**AI 安装指引升级为「GitHub 直装优先」**——快速安装部分改为给 AI/安装助手的优先级决策树：①要最新版/不确定 → `git+ssh` GitHub 直装（git 依赖拉最新 commit，**天然绕过 npm 24h 门禁，百分百新版**）；②要 npm 正式版 → 先 `npm view` 查版本再指定 `@版本` 安装；③**禁止裸名安装**（24h 内会落回旧版）
 - **v0.5.5**：**安装指引升级（AI 友好）**——README 快速安装改为「先 `npm view dsh-skill-picker version` 查版本号 → 再 `add dsh-skill-picker@版本号` 指定安装」，并给 AI/安装助手显式提示：新版本发布后 **24 小时内裸名安装会被 minimumReleaseAge 门禁拦截并自动落回旧版**，必须指定版本号才能装到最新
@@ -149,6 +150,7 @@ DSH 的 [dsh-tool-skill](https://github.com/deepseek-ai/deepseek-harness) 在 `a
 
 - **技能来源**：**优先走官方宿主 skills API**（`connection.api.skills.list`——与 DSH 内置 `/` 补全**完全同一个数据源**，会话作用域，自动覆盖全部官方目录）；官方 API 不可用时**自动回退**到内置扫描。两条路都支持 `DSH_HOME` 环境变量。
 - **兜底扫描范围**：与官方 `dsh-skill-filesystem` provider 的默认根完全同源——项目级 `<workspace>/.dsh/skills`、`<workspace>/.agents/skills`，用户级 `~/.dsh/skills`、`~/.agents/skills`（`$DSH_AGENTS_HOME` 可覆盖），同名时按官方 rank 项目级优先。走兜底时 ⚡ 面板底部显示「本地扫描」徽标。
+- **链接型技能**：技能目录里的**符号链接 / Junction**会被跟随读取（v0.5.9 起，对应 issue #6），链接型技能与普通目录一视同仁；断链、指向普通文件的链接静默跳过，不影响其它技能。
 - **暂不支持**：自定义技能目录（官方 `customSkillDirs` 配置）——需要的话欢迎 PR。
 - **失败保护**：client 端用 `ctx.slots.inject`（等 `conversation.input.right` 插槽声明存在才注册，插槽缺失时静默跳过，不会拖垮启动）；host 端路由 try/catch，扫描目录不存在时返回空列表而非报错。
 - **依赖版本**：按 DSH `0.1.0-rc.6` API 编写（cordis 4 / web profile 标准装配）。如遇 DSH 大版本更新导致 API 变化，插件会以启动日志的插件错误提示为准，卸载 `dsh plugin --profile web remove dsh-skill-picker` 即可回退。
