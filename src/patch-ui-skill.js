@@ -14,9 +14,10 @@
  *     (single source group, same list, upgraded matching).
  *
  * Every DSH boot this module scans every profile under `$DSH_HOME/profiles`
- * (default `~/.dsh/profiles`) for an installed ui-skill `lib/client.js` —
- * either the user's local patched copy (`local/dsh-client-ui-skill`) or the
- * plain npm install (`node_modules/@deepseek-ai/dsh-client-ui-skill`) — and
+ * (default `~/.dsh/profiles`) for an installed ui-skill `lib/client.js` — the
+ * shared core root (`profiles/node_modules/@deepseek-ai/…`, used by global
+ * installs), the user's local patched copy (`local/dsh-client-ui-skill`), or
+ * the plain npm install (`node_modules/@deepseek-ai/dsh-client-ui-skill`) — and
  * re-applies both patches when DSH upgrades overwrote them. The original file
  * is backed up once as `<file>.dsh-skill-picker.bak` before the first write.
  * All operations are idempotent and never throw: a missing profile, package
@@ -26,7 +27,8 @@
  * @module dsh-skill-picker/patch-ui-skill
  */
 
-import { readFile, writeFile, copyFile, readdir, access } from 'node:fs/promises'
+import { readFile, writeFile, copyFile, readdir, access, realpath, rename } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -106,9 +108,20 @@ export function dshHome() {
 }
 
 /**
- * Enumerate every installed ui-skill `lib/client.js` across all profiles:
- * the user's local patched copy first (that is what the profile actually
- * loads when linked), then the plain npm install. Deduplicated by real path.
+ * Enumerate every installed ui-skill `lib/client.js` across all profiles.
+ *
+ * Three layouts are covered (deduplicated by real path):
+ *   1. the **shared core root** `profiles/node_modules/@deepseek-ai/…` — used by
+ *      a global `npm i -g @deepseek-ai/dsh`, where the official package is NOT
+ *      below any single profile (issue #7 — missing this made the whole patch
+ *      silently no-op for those installs);
+ *   2. the user's local patched copy (`profiles/<p>/local/dsh-client-ui-skill`)
+ *      — that is what a linked profile actually loads;
+ *   3. the plain npm install inside a profile
+ *      (`profiles/<p>/node_modules/@deepseek-ai/…`).
+ *
+ * As a defensive extra, each profile is also asked through Node's own resolver
+ * (`createRequire().resolve()`), so a layout we did not enumerate still works.
  * Never throws — a missing profiles dir yields [].
  * @returns {Promise<string[]>} candidate file paths.
  */
@@ -122,26 +135,45 @@ export async function uiSkillClientPaths() {
   }
   const seen = new Set()
   const found = []
+
+  /** Add one candidate if it exists; deduplicate by real path. */
+  const collect = async (candidate) => {
+    try {
+      await access(candidate)
+      const real = await realpath(candidate)
+      if (seen.has(real)) return
+      seen.add(real)
+      found.push(candidate)
+    } catch {
+      /* not present at this location */
+    }
+  }
+
+  /** Ask Node's resolver where this profile would load the package from. */
+  const collectByResolve = async (profileDir) => {
+    try {
+      const require = createRequire(path.join(profileDir, 'package.json'))
+      await collect(require.resolve('@deepseek-ai/dsh-client-ui-skill/lib/client.js'))
+    } catch {
+      /* not resolvable from this profile */
+    }
+  }
+
+  // 1. shared core root (global installs) — see the doc comment above.
+  await collect(path.join(profilesDir, 'node_modules', '@deepseek-ai', 'dsh-client-ui-skill', 'lib', 'client.js'))
+
   for (const entry of profiles) {
+    // `node_modules` is a sibling of the profiles, not a profile itself.
+    if (entry.name === 'node_modules') continue
     // A profile directory may itself be reached through a link; follow it
     // instead of relying on the lstat-based dirent (see dir-entry.js).
     if (!(await isDirectoryEntry(profilesDir, entry))) continue
-    const candidates = [
-      path.join(profilesDir, entry.name, 'local', 'dsh-client-ui-skill', 'lib', 'client.js'),
-      path.join(profilesDir, entry.name, 'node_modules', '@deepseek-ai', 'dsh-client-ui-skill', 'lib', 'client.js'),
-    ]
-    for (const candidate of candidates) {
-      try {
-        await access(candidate)
-        const real = await import('node:fs/promises').then(({ realpath }) => realpath(candidate))
-        if (!seen.has(real)) {
-          seen.add(real)
-          found.push(candidate)
-        }
-      } catch {
-        /* not present at this location */
-      }
-    }
+    // 2. the user's local patched copy (what a linked profile actually loads).
+    await collect(path.join(profilesDir, entry.name, 'local', 'dsh-client-ui-skill', 'lib', 'client.js'))
+    // 3. the plain npm install inside the profile.
+    await collect(path.join(profilesDir, entry.name, 'node_modules', '@deepseek-ai', 'dsh-client-ui-skill', 'lib', 'client.js'))
+    // Defensive: whatever Node itself would resolve (dupes removed above).
+    await collectByResolve(path.join(profilesDir, entry.name))
   }
   return found
 }
@@ -178,7 +210,15 @@ export async function patchUiSkillFile(file) {
   } catch {
     await copyFile(file, backup)
   }
-  await writeFile(file, next, 'utf8')
+  // Write through a temp file + rename instead of an in-place `writeFile`:
+  //  - pnpm installs are HARDLINKED to a shared content-addressable store, so
+  //    writing in place would mutate that shared inode and silently change
+  //    every other project using the same package version. rename() swaps the
+  //    directory entry instead, leaving the shared inode untouched.
+  //  - rename is also atomic, so an interrupted boot cannot leave a torn file.
+  const tmp = `${file}.dsh-skill-picker.tmp`
+  await writeFile(tmp, next, 'utf8')
+  await rename(tmp, file)
   return result
 }
 
@@ -198,6 +238,14 @@ export async function healUiSkillPatches() {
     } catch (error) {
       errors.push(`${file}: ${String(error?.message ?? error)}`)
     }
+  }
+  // Loud on the empty case. Silence here was the most confusing part of
+  // issue #7: "found 0 targets" and "everything already applied" used to print
+  // identically, so nobody could tell the patch had never run at all.
+  if (files.length === 0) {
+    console.warn('[dsh-skill-picker] ui-skill patch: 0 target client.js found under '
+      + `${path.join(dshHome(), 'profiles')} — fuzzy+pinyin matching will NOT be applied. `
+      + 'See https://github.com/a735624258/dsh-skill-picker/issues/7')
   }
   return { files: filesReport, errors }
 }
