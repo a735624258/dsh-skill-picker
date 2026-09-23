@@ -119,6 +119,53 @@ export async function scanSkills(cwd) {
 }
 
 /**
+ * Decide what (if anything) the ui-skill self-heal patch should say on boot
+ * (issue #8).
+ *
+ * `healUiSkillPatches()` reports **every target file it found**, whether or not
+ * this boot changed it. Keying the log off `report.files.length` therefore
+ * printed a report-shaped JSON line on *every* start — even when the patches
+ * were already up to date — which reads like a warning and buries the lines
+ * that really matter. Speak up only when there is something to say:
+ *
+ *   - `noop`    → an anchor did not match: the official implementation moved and
+ *                 the enhancement is NOT applied. Always a warning (this is the
+ *                 same class of silent failure as issue #7).
+ *   - `patched` → this boot really rewrote a file: one report line.
+ *   - `errors`  → I/O failures: one warning (folded into the report line when a
+ *                 patch also succeeded, so a single line carries both).
+ *   - none      → silent: the install is already up to date.
+ *
+ * Set `DSH_SKILL_PICKER_LOG=debug` for the full report including `skipped`.
+ *
+ * Exported for tests; `io` is injectable so they can capture the output.
+ *
+ * @param {{files?: Array, errors?: string[]}} report - result of healUiSkillPatches().
+ * @param {Pick<Console, 'log' | 'warn'>} [io] - sinks (defaults to the console).
+ */
+export function reportUiSkillPatches(report, io = console) {
+  const files = report?.files ?? []
+  const errors = report?.errors ?? []
+  // An anchor miss means the enhancement silently did not apply — never bury it.
+  const stale = files.filter((file) => file.noop.length > 0)
+  if (stale.length > 0) {
+    io.warn('[dsh-skill-picker] ui-skill patch: anchors not found, enhancement NOT applied '
+      + '(the official implementation likely changed):', JSON.stringify(stale))
+  }
+  const changed = files.filter((file) => file.patched.length > 0)
+  // Read per call so the switch also works when set by tests or a wrapper.
+  const debug = process.env.DSH_SKILL_PICKER_LOG === 'debug'
+  if (debug) {
+    io.log('[dsh-skill-picker] ui-skill patch report (debug):', JSON.stringify({ files, errors }))
+  } else if (changed.length > 0) {
+    // Only the files this boot actually touched, plus every error.
+    io.log('[dsh-skill-picker] ui-skill patch report:', JSON.stringify({ files: changed, errors }))
+  } else if (errors.length > 0) {
+    io.warn('[dsh-skill-picker] ui-skill patch errors:', JSON.stringify(errors))
+  }
+}
+
+/**
  * Mount the skills route and the prompt section.
  * @param ctx - context carrying webServer and systemPrompt.
  */
@@ -149,11 +196,12 @@ export function apply(ctx) {
   // completion's skill group ordered above commands and its matching fuzzy
   // across DSH upgrades. Runs once per boot; idempotent, backed up, and
   // never allowed to take the host down.
+  //
+  // Logging is gated on "did this boot change anything / fail" rather than
+  // "was a target found" — see `reportUiSkillPatches` (issue #8).
   ctx.effect(() => {
     healUiSkillPatches().then((report) => {
-      if (report.files.length > 0) {
-        console.log('[dsh-skill-picker] ui-skill patch report:', JSON.stringify(report))
-      }
+      reportUiSkillPatches(report)
     }).catch((error) => {
       console.warn('[dsh-skill-picker] ui-skill patch failed:', error)
     })
