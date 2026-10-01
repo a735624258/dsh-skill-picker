@@ -151,7 +151,7 @@ test('warns with zero targets and points at the issue tracker', async () => {
     const warnings = await captureWarnings(() => healUiSkillPatches())
     assert.equal(warnings.length, 1)
     assert.match(warnings[0], /0 target/)
-    assert.match(warnings[0], /issues\/9/)
+    assert.match(warnings[0], /issues\/14/)
     assert.ok(dshHome.length > 0)
   })
 })

@@ -114,16 +114,27 @@ DSH 的 [dsh-tool-skill](https://github.com/deepseek-ai/deepseek-harness) 在 `a
 
 ## 与官方 `/` 补全的关系（v0.4.0 起：增强，而非并列）
 
-**v0.2.0–0.3.4**：插件注册了一个独立的 `/` 候选源（`skill-fuzzy`），与官方 ui-skill 源**并列**——菜单里出现两个技能分组，搜索行为相互独立（冲突风险、视觉重复）。
+**v0.2.0–0.3.4**：插件注册了一个独立的 `/` 候选源（`skill-fuzzy`），与官方 ui-skill 源**并列**——菜单里出现两个技能分组，搜索行为相互独立（冲突风险、视觉重复）。**这条路已被官方堵死**：`inputTriggers.registerSource` 对 `(trigger, name)` 有唯一性硬检查，重名直接抛 `slash source "/skill" is already registered`。
 
-**v0.4.0 起**：**不再注册平行源**。改为给官方 `@deepseek-ai/dsh-client-ui-skill` 包的 candidates **打补丁**——其候选逻辑从 `skill.name.startsWith(query)`（前缀匹配）换成调用插件注入的全局函数 `window.__dshSkillPickerFuzzy`（fuzzysort 模糊 + pinyin-pro 拼音 + 最近/常用排行，与 ⚡ 面板同一套规则）。**v0.5.1 起，补丁由 host 端每次启动自动应用**（另加 `order: 2→-1`：技能组排在命令组之上），首次修改前自动备份 `.bak`，DSH 升级覆盖官方包后自动重打——**安装插件即生效，无需手动操作**。
+**v0.4.0–v0.5.13**：改为给官方 `@deepseek-ai/dsh-client-ui-skill` 包的 candidates **打文件补丁**——候选逻辑从 `skill.name.startsWith(query)`（前缀匹配）换成调用插件注入的全局函数 `window.__dshSkillPickerFuzzy`（fuzzysort 模糊 + pinyin-pro 拼音 + 最近/常用排行）。**v0.5.1 起由 host 端每次启动自动应用**（另加 `order: 2→-1`：技能组排在命令组之上），首次修改前自动备份 `.bak`。**代价是极度依赖"那个文件是一个可写的普通文件"**——打包桌面端（`app.asar` 内）、pnpm 硬链接、迁移后悬空的软链，任一情况都让它静默失效。
 
-**效果**：官方「技能」分组**仍是唯一一个 `/` 技能列表**（官方规则全部保留：`userInvocable` 区分、菜单文案、排序基础），只是匹配行为被升级、分组排序被前移；插件不再产生第二列表。
+**v0.5.14 起（首选路径）**：**改用运行时接管，不碰任何文件**。官方 `inputTriggers` 服务通过 `sources(trigger)` / `all()` 交出的就是**活源对象**，而斜杠菜单是**每次调用现取** `source.candidates`：
 
-> 手动兜底（旧流程，一般不需要）：把官方包拷到 `profiles/web/local/dsh-client-ui-skill/`（`lib/client.js` 改 candidates 为 `window.__dshSkillPickerFuzzy` 优先、`order` 改 `-1`），profile package.json 加依赖 `"@deepseek-ai/dsh-client-ui-skill": "link:C:/Users/<user>/.dsh/profiles/web/local/dsh-client-ui-skill"`，`pnpm install` 后重启 DSH。自动补丁对 local 副本与 npm 安装两种形态都适用，升级后自愈，无需重复手动操作。
+```js
+const source = ctx.inputTriggers.sources('/').find((s) => s.name === 'skill')
+const original = source.candidates
+source.candidates = async (projection, args) => rank(await original(projection, { ...args, query: '' }), args.query)
+```
+
+关键点：官方 candidates 返回的是**已映射的展示项**、且已被官方自己的匹配器过滤过，所以必须用**空查询**问它要**全量**（`rankByName(items, "")` 原样返回全部），再自己排序。官方规则全部继承（`userInvocable` 过滤、子智能体会话排除、「仅用户可调用」文案）。**文件补丁保留为旧内核兜底**，两条路同时存在时不会打架（运行时包装始终以空查询取全量，不会双重过滤）。
+
+**效果**：官方「技能」分组**仍是唯一一个 `/` 技能列表**，只是匹配与排序被升级；⚡ 面板与 `/` 菜单共用**同一个 `rankPickerItems`**，因此匹配结果和显示顺序完全一致。
+
+> 手动兜底（旧流程，v0.5.14 起已**不再需要**）：把官方包拷到 `profiles/web/local/dsh-client-ui-skill/`，profile package.json 加 `"@deepseek-ai/dsh-client-ui-skill": "link:…"`，`pnpm install` 后重启 DSH。仅当你的内核连 `inputTriggers` 服务都不提供时才还需要它。
 
 ## 更新日志
 
+- **v0.5.14**：**`/` 菜单增强改为「运行时接管」，彻底不碰文件（对应 issue #14）**——这一版把插件最脆的那根线拔掉了。**背景**：让 `/` 支持模糊 + 拼音，v0.4.0 起的做法是**改写官方 `@deepseek-ai/dsh-client-ui-skill/lib/client.js` 这个文件**。但"那个文件是不是一个可写的普通文件"完全不由插件决定：打包桌面端把它放在 `resources/app.asar` 里（**只能读、不能就地写**）、pnpm 把它硬链接进共享 store、`Desktop → NEXT` 迁移后共享根的软链整批悬空——**任一情况都让补丁静默失效**（更糟的是它还会"成功"地给一份没人在用的副本打上补丁，日志看着一切正常）。**新做法**：官方 `@deepseek-ai/dsh-client-ui-input-trigger` 通过公开服务 `inputTriggers` 暴露源注册表（`sources(trigger)` 与 `all()` 返回的都是**活对象**），而斜杠菜单是**每次调用时现取** `source.candidates`（不是注册时抓一份引用）——所以插件可以在运行时把官方那个源的 `candidates` **包一层**，自己接管匹配，**一个文件都不用动**，`app.asar` / 硬链接 / 软链三种形态一次全解决。**两个必须讲清的技术点**：① **不能注册同名源**——`registerSource` 对 `(trigger, name)` 有唯一性硬检查（重名抛 `slash source "/skill" is already registered`），这正是 v0.2.0–0.3.4 那条"平行源"路线被官方堵死的原因，也是后来才被迫去改文件的由来；**包装已有源**才是门开的地方。② **必须用空查询向官方要全量**——官方 `candidates` 返回的是**已映射的展示项**，而且已被官方匹配器**过滤**过，模糊查询要匹配的技能根本不在里面；用空查询调用则 `rankByName(items, "")` **原样返回全部**，官方可见性规则（`userInvocable` 过滤、子智能体会话排除、「仅用户可调用」文案）也都已由官方代码先执行过。**顺带**：⚡ 面板与 `/` 菜单现在共用同一个 `rankPickerItems()`，两处匹配结果与排序**不可能再不一致**；文件补丁**保留为旧内核兜底**（两条路不打架：运行时包装始终以空查询取全量）；启动告警里指向已关闭 issue #9 的链接改为指向 #14。**回归测试**：新增 `test/slash-source.test.mjs` 12 例（按 `sources()` 定位、`all()` 兜底、服务缺失/抛错时降级、空查询取全量、空查询不排序、排序抛错仍返回官方列表、dispose 还原且清标记、重复包装为 no-op、非源对象忽略、迟到注册的重试安装、永不出现时安静放弃）。全量 `npm test`：**51 tests / 50 pass / 0 fail**（1 skip 是 Windows 建文件符号链接需权限那条）
 - **v0.5.13**：**适配 DSH 0.2.0 线（对应 issue #13、#11、#9）**——这一版修的是三件不同的事，但它们有一个共同的教训：**插件"没坏"和"没在跑"长得一模一样**。
   - **① 内核加载门不再拒载（issue #13）**：`peerDependencies` 里六项 `@deepseek-ai/dsh-*` 全钉在 `^0.1.0-rc.6`，semver 上界是 `<0.2.0-0`，于是 DSH **0.2.0-rc.1 / rc.2 启动时直接 skip 掉整个插件**（`dsh: skipping profile bundle "dsh-skill-picker"`），⚡ 按钮**凭空消失**、没有任何其它症状。关键点是：**这不是"真不兼容"，是"声明过度"**——`dsh-app-boot` 的 `evaluatePluginCompatibility()` 是拿**内核版本**去逐项比对 `@deepseek-ai/dsh*` 的 peer 范围，而这些包与内核**锁步同版本**（实测 `dsh` / `dsh-app-boot` / `dsh-client-locale` / `dsh-client-ui-slots` / `dsh-host-webserver` / `dsh-skill` / `dsh-system-prompt` / `dsh-client-ui-skill` 全是同一个号），所以钉住一个小版本线 = **内核每跳一版就必然误拒一次**。现在改为 `^0.1.0-rc.6 || >=0.2.0-rc.1 <1.0.0-0`：0.1.x / 0.2.x 及以后所有 0.x 都能加载，到 `1.0.0` 才需要重新确认。真正的"已验证"信号交还给 `dsh.compatibility.dshReleases` 兼容表（本版补上 `0.1.7-rc.1`、`0.2.0-rc.1`、`0.2.0-rc.2`）
   - **② 项目级技能不再消失（issue #11，由 @Arcobalneo 定位并提交 PR #12）**：0.1.7 起 ⚡ 面板**静默丢掉整个项目级技能层**（`<workspace>/.agents/skills` 里的技能一支都不出现，用户级正常，无报错无 warning）。两条取数路同时退化：**主路** `remote.skills.list` 的 gate 读 `props.session?.sessionId`，而 session scope 插槽给的是框架标准 prop `sessionId`、**没有 `session` 对象** → 这条路一次都没发过请求；**兜底路**用 `ctx.sessions.list.getSnapshot().current` 定位当前会话，而 0.1.7 的 store 状态是 `{ ids, byId, phase, projectionsBySession }`、**没有 `current` 游标** → `currentCwd` 恒为 `''` → 请求退化成不带 `?cwd=` → 只扫用户级。修法是把"会话身份 + 工作区 cwd"收敛到新模块 `src/client/session-view.js`，两路都只依赖座位自己的标准 props。**本版在其之上补了一处**：`props.useSessions` 座位在 0.1.2 / 0.1.5 内核上可能不存在，那样 cwd 会退化回空串——所以把旧的 `ctx.sessions.list.current` 取值保留为**次级来源**，仅在标准 props 取不到时使用，避免"修了 0.1.7、砸了 0.1.5"
@@ -162,7 +173,9 @@ DSH 的 [dsh-tool-skill](https://github.com/deepseek-ai/deepseek-harness) 在 `a
 - **暂不支持**：自定义技能目录（官方 `customSkillDirs` 配置）——需要的话欢迎 PR。
 - **失败保护**：client 端用 `ctx.slots.inject`（等 `conversation.input.right` 插槽声明存在才注册，插槽缺失时静默跳过，不会拖垮启动）；host 端路由 try/catch，扫描目录不存在时返回空列表而非报错。
 - **依赖版本**：peer 范围声明为 `^0.1.0-rc.6 || >=0.2.0-rc.1 <1.0.0-0`（v0.5.13 起）——DSH 的启动加载门会拿**内核版本**逐项比对 `@deepseek-ai/dsh*` 的 peer 范围，而内核包是**锁步同版本**的，钉死单个小版本线会让插件在内核每次升级时被**误拒**（`skipping profile bundle`，表现为 ⚡ 按钮消失、无其它症状）。真正的"已验证到哪一版"以 `package.json` 的 `dsh.compatibility.dshReleases` 为准；要回退只需 `dsh plugin --profile web remove dsh-skill-picker`。
-- **桌面端（Electron）**：官方技能 UI 由**安装树**拥有——解除安装的构建是 `resources/app/node_modules/…`（本插件直接作为候选打补丁），**打包构建**是 `resources/app.asar` 里那份（**只能读、不能就地写**）。若你的 profile **没有**把 `@deepseek-ai/dsh-client-ui-skill` 声明成 `link:` 到本地副本，真正被服务的就是 asar 那份，`/` 菜单的模糊/拼音升级**打不上去**——这种情况启动日志会明确告警（v0.5.13 起，不再静默）。救法：复制该包到 `profiles/<profile>/local/dsh-client-ui-skill`，在 profile 的 `package.json` 里加 `"@deepseek-ai/dsh-client-ui-skill": "link:…/profiles/<profile>/local/dsh-client-ui-skill"`，重启后本插件即可给这份打补丁。
+- **桌面端（Electron）**：**v0.5.14 起不再需要任何手工处理**。`/` 菜单的模糊/拼音升级改为**运行时接管**官方源（见上节），因此官方技能 UI 是放在 `resources/app/node_modules/…`（未打包构建）还是 `resources/app.asar` 里（打包构建，**只能读不能写**）都不影响——`app.asar`、pnpm 硬链接、迁移后悬空的软链一律免疫。
+  - 内核若**不提供** `inputTriggers` 服务，插件自动退回旧的**文件补丁**路径；该路径的候选顺序是：共享根 `profiles/node_modules/…` → 各 profile 的 `local/` 与 `node_modules/` → 活动桌面安装树 `<resources>/app/node_modules/…`。
+  - 旧路径失效时（补丁打在了没人在用的副本上）启动日志会明确告警，v0.5.14 起指向 issue #14；对应的手工自救法是把官方包复制到 `profiles/<profile>/local/dsh-client-ui-skill`，并在 profile 的 `package.json` 里加 `"@deepseek-ai/dsh-client-ui-skill": "link:…"`。
 
 ## 开发
 

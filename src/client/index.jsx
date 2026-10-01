@@ -20,6 +20,7 @@ import fuzzysort from 'fuzzysort'
 import { pinyin } from 'pinyin-pro'
 
 import { sessionIdOf, useWorkspaceCwd } from './session-view.js'
+import { installSlashFuzzy } from './slash-source.js'
 
 /** Required services: slot registry, host connection (official skills API), sessions (workspace cwd fallback), input triggers (/ fuzzy source). */
 export const inject = ['slots', 'connection', 'sessions', 'inputTriggers']
@@ -177,6 +178,47 @@ function matchRank(skill, q) {
   if (desc.includes(q)) return 2
   if (py.includes(q)) return 3
   return 4
+}
+
+/**
+ * The picker's single ranking rule, shared by the ⚡ panel, the legacy `/`
+ * matcher and the runtime `/` takeover (issue #14) so the two lists can never
+ * disagree about matching OR order.
+ *
+ * Only `name` and `description` are read, which is what both raw skill entries
+ * and the official menu's already-mapped display items carry.
+ *
+ * Relevance first (name-startsWith > name-contains > description > pinyin),
+ * then the ⚡ panel's pinned/usage order as the tiebreak — fuzzysort decides
+ * WHO matches, never the display order. Pure subsequence noise (dispersed
+ * letters that never form an actual substring) is dropped.
+ *
+ * @param items - [{ name, description }]
+ * @param query - the raw query string.
+ * @returns the ranked subset (all items, in panel order, for an empty query).
+ */
+function rankPickerItems(items, query) {
+  const ordered = groupByPinned(
+    Array.isArray(items) ? items : [],
+    loadUsage(),
+    loadPinned(),
+  ).flatMap((group) => group.items)
+  const q = String(query ?? '').trim().toLowerCase()
+  if (q === '') return ordered
+  const order = new Map(ordered.map((skill, index) => [skill.name, index]))
+  const targets = ordered.map((s) => ({
+    s,
+    search: `${s.name} ${s.description ?? ''} ${skillPinyinText(s.name, s.description ?? '')}`,
+  }))
+  return fuzzysort.go(q, targets, {
+    key: 'search',
+    limit: 30,
+    threshold: -10000,
+  })
+    .filter((r) => r.score > 0)
+    .map((r) => r.obj.s)
+    .filter((s) => matchRank(s, q) < 4)
+    .sort((a, b) => matchRank(a, q) - matchRank(b, q) || (order.get(a.name) ?? 0) - (order.get(b.name) ?? 0))
 }
 
 /** Row height matches the resident chrome (access mode, plan, attach, model). */
@@ -692,11 +734,34 @@ export function apply(ctx) {
     }
   }, 'dsh-skill-picker: composer input slot')
 
-  // Fuzzy `/` completion: instead of registering a parallel source group
-  // (which would appear as a second list next to the official one), expose a
-  // global matcher that the patched official ui-skill candidates calls. The
-  // official group stays THE single `/` list; only its matching behaviour is
-  // upgraded to fuzzy + pinyin (name AND description, subsequence scoring).
+  // Fuzzy `/` completion.
+  //
+  // Primary mechanism (v0.5.14, issue #14): take the official source over at
+  // runtime through the public `inputTriggers` service — matching, group order
+  // AND pick tracking. Nothing on disk is touched, so a packaged desktop build
+  // (`app.asar`), a pnpm-hardlinked install and a profile copy reached through
+  // a stale symlink all work the same way. See ./slash-source.js.
+  //
+  // Legacy mechanism (still installed): a global matcher that the *file*-patched
+  // official ui-skill calls. Kept because it is the only path on a kernel whose
+  // input-trigger service does not expose the registry; harmless when the
+  // runtime takeover is doing the work, because the takeover always asks the
+  // official candidates for the whole catalogue (empty query) and re-ranks
+  // afterwards.
+  const trackPick = (name) => {
+    const usage = loadUsage()
+    const nextUsage = { ...usage, [name]: { count: (usage[name]?.count ?? 0) + 1, lastUsed: Date.now() } }
+    saveUsage(nextUsage)
+    // Notify the bolt panel (and any other listeners) to re-read storage so a
+    // slash pick ranks as "recently used" there too, not only in the official
+    // `/` menu.
+    try {
+      window.dispatchEvent(new CustomEvent('dsh-skill-picker:usage-updated'))
+    } catch {
+      /* best-effort */
+    }
+  }
+
   ctx.effect(() => {
     // Mirror the ⚡ panel's ordering: pinned first, then recently/frequently
     // used skills, then the untouched rest — so both stay in sync.
@@ -704,55 +769,30 @@ export function apply(ctx) {
       // Same visibility rule as the ⚡ panel: never let the `/` list surface a
       // skill the user may not invoke (issue #10).
       const visible = (Array.isArray(skills) ? skills : []).filter(isUserFacingSkill)
-      const ordered = groupByPinned(visible, loadUsage(), loadPinned()).flatMap((group) => group.items)
-      const q = String(query).trim().toLowerCase()
-      if (q === '') return ordered
-      // Rank by the ⚡ panel's exact order (pinned → recent → frequent → rest)
-      // so both lists stay in sync: fuzzysort only decides WHO matches, not
-      // the display order. Without this, a slash query re-sorts matches by
-      // match score and the two menus diverge for the same skill.
-      const rankByName = new Map(ordered.map((skill, index) => [skill.name, index]))
-      const targets = ordered.map((s) => ({
-        s,
-        search: `${s.name} ${s.description ?? ''} ${skillPinyinText(s.name, s.description ?? '')}`,
-      }))
-      const results = fuzzysort.go(q, targets, {
-        key: 'search',
-        limit: 30,
-        threshold: -10000,
-      })
-      // Relevance first (name-startsWith > name-contains > description >
-      // pinyin), then the ⚡ panel's pinned/usage order as the tiebreak —
-      // the shared rule with the bolt panel, so a name-exact skill like
-      // svg-diagram for "svg" surfaces above merely-recently-used ones.
-      return results
-        .filter((r) => r.score > 0)
-        .map((r) => r.obj.s)
-        // Drop pure subsequence noise (dispersed letters that never form an
-        // actual substring): keep only name/description/pinyin hits.
-        .filter((s) => matchRank(s, q) < 4)
-        .sort((a, b) => matchRank(a, q) - matchRank(b, q) || (rankByName.get(a.name) ?? 0) - (rankByName.get(b.name) ?? 0))
+      return rankPickerItems(visible, query)
     }
     window.__dshSkillPickerFuzzy = fuzzyMatch
     // Usage tracking for picks made from the official `/` menu: the patched
     // ui-skill onPick calls this so a slash pick ranks like a bolt-panel pick.
-    const trackPick = (name) => {
-      const usage = loadUsage()
-      const nextUsage = { ...usage, [name]: { count: (usage[name]?.count ?? 0) + 1, lastUsed: Date.now() } }
-      saveUsage(nextUsage)
-      // Notify the bolt panel (and any other listeners) to re-read storage so
-      // a slash pick ranks as "recently used" there too, not only in the
-      // official / menu.
-      try {
-        window.dispatchEvent(new CustomEvent('dsh-skill-picker:usage-updated'))
-      } catch {
-        /* best-effort */
-      }
-    }
     window.__dshSkillPickerTrack = trackPick
     return () => {
       if (window.__dshSkillPickerFuzzy === fuzzyMatch) delete window.__dshSkillPickerFuzzy
       if (window.__dshSkillPickerTrack === trackPick) delete window.__dshSkillPickerTrack
     }
   }, 'dsh-skill-picker: fuzzy matcher for official / source')
+
+  // Take the official `/` source over at runtime (issue #14): the same three
+  // upgrades the file patch applies, without writing to disk.
+  ctx.effect(() => {
+    const inputTriggers = ctx.inputTriggers ?? ctx.get?.('inputTriggers')
+    if (inputTriggers === undefined) return () => {}
+    return installSlashFuzzy(inputTriggers, {
+      // Rank the official display items ({name, description}) by the same rule
+      // the bolt panel uses, so the two lists agree on order as well as match.
+      rank: (items, query) => rankPickerItems(items, query),
+      // `order: 2` (official) → `-1`: the skill group sorts above commands.
+      order: -1,
+      onPick: trackPick,
+    })
+  }, 'dsh-skill-picker: runtime takeover of the official / skill source')
 }

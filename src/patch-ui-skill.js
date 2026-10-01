@@ -344,7 +344,7 @@ export async function healUiSkillPatches() {
   if (files.length === 0) {
     console.warn('[dsh-skill-picker] ui-skill patch: 0 target client.js found under '
       + `${path.join(dshHome(), 'profiles')} — fuzzy+pinyin matching will NOT be applied.`
-      + `${note} See https://github.com/a735624258/dsh-skill-picker/issues/9`)
+      + `${note} See https://github.com/a735624258/dsh-skill-picker/issues/14`)
   } else if (note !== '') {
     // Targets existed, so the old code stayed silent — but none of them is the
     // copy the host serves. That is issue #9's silent failure: a "successful"
