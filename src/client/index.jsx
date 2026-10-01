@@ -409,26 +409,6 @@ const menuItemStyle = {
   whiteSpace: 'nowrap',
 }
 
-/** Lightweight source badge shown only when the list came from the host scan fallback (official API unavailable). */
-const sourceBadgeStyle = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  alignSelf: 'flex-start',
-  margin: '0 8px 8px',
-  padding: '2px 8px',
-  border: '1px solid rgba(255, 193, 7, 0.35)',
-  borderRadius: '999px',
-  background: 'rgba(255, 193, 7, 0.1)',
-  color: '#d9a520',
-  fontSize: '11px',
-  lineHeight: '16px',
-  flex: 'none',
-}
-
-const sourceBadgeTextStyle = {
-  fontFamily: 'var(--ds-font-family-code, ui-monospace, monospace)',
-}
-
 /** The picker's bolt glyph: DeepSeek palette gradient + slim stroke. */
 function BoltIcon() {
   return (
@@ -670,6 +650,25 @@ function SkillPickerButton(props) {
     }
   }, [menu])
 
+  /**
+   * The panel used to show "本地扫描" / "/ 增强：运行时接管" as badges under the
+   * list. They are diagnostics for whoever is debugging, not something a user
+   * needs on screen — they occupied two rows and said nothing useful day to day
+   * (用户's call, and he was right).
+   *
+   * They are not simply dropped: "the plugin is fine" and "the plugin is not
+   * running at all" look identical without them, which is the whole lesson
+   * behind issue #14. So they moved here (one console line per panel open) and
+   * into the ⚡ button's tooltip.
+   */
+  useEffect(() => {
+    if (skills === undefined) return
+    console.info(
+      `[dsh-skill-picker] 技能列表 ${skills.length} 条，来源：${source === 'host' ? '本地扫描（官方 skills API 不可用）' : '官方 API'}`
+      + `；/ 增强：${slashEnhancementMode() === 'runtime' ? '运行时接管，已生效' : '未生效（见 issue #14）'}`,
+    )
+  }, [skills, source])
+
   const toggle = () => {
     if (!open) {
       // Pull first: a pin or a pick made on another client (desktop ↔ web ↔
@@ -782,7 +781,7 @@ function SkillPickerButton(props) {
       <button
         type="button"
         onClick={toggle}
-        title="选择技能（插入 /技能名 到发送框）"
+        title={`选择技能（插入 /技能名 到发送框）${source === 'host' ? '　·　列表来自本地扫描' : ''}${slashEnhancementMode() === 'runtime' ? '　·　/ 增强：运行时接管' : ''}`}
         aria-label="选择技能"
         style={{
           ...buttonStyle,
@@ -996,19 +995,6 @@ function SkillPickerButton(props) {
                       </span>
                     </div>
                   ))}
-                </div>
-              )}
-              {source === 'host' && (
-                <div style={sourceBadgeStyle} title="官方技能 API 不可用，列表来自本地目录扫描（与官方 / 补全同源）">
-                  <span style={sourceBadgeTextStyle}>本地扫描</span>
-                </div>
-              )}
-              {slashEnhancementMode() === 'runtime' && (
-                <div
-                  style={sourceBadgeStyle}
-                  title="`/` 菜单的模糊+拼音搜索由本插件在运行时接管官方技能源（不依赖改写任何文件，issue #14）"
-                >
-                  <span style={sourceBadgeTextStyle}>/ 增强：运行时接管</span>
                 </div>
               )}
               <div style={{ margin: '0 10px 8px', fontSize: '11px', color: 'var(--dsw-alias-label-tertiary, #8a94a6)' }}>
