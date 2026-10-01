@@ -17,9 +17,10 @@
  */
 
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import test, { beforeEach } from 'node:test'
 
 import {
+  __resetSlashStateForTests,
   findSkillSource,
   installSlashFuzzy,
   isSkillSourceWrapped,
@@ -28,10 +29,21 @@ import {
   wrapSkillSource,
 } from '../src/client/slash-source.js'
 
+// The module keeps state on purpose (the wrapped source, the priming request,
+// the per-Session cache), so every test starts from a clean slate.
+beforeEach(() => __resetSlashStateForTests())
+
 /** A stand-in for the official skill source. */
 function makeSource(options = {}) {
   const calls = []
   const picks = []
+  // Exposed so a test can change what the official source would return next —
+  // which is how the cache is told apart from a fresh fetch.
+  const list = options.list ?? [
+    { name: 'backup-memory', description: '备份 DeepSeek Harness 的记忆库' },
+    { name: 'ji-zhang', description: '记账：一句话报一笔开销' },
+    { name: 'svg-diagram', description: '创建 SVG 图表' },
+  ]
   const source = {
     trigger: '/',
     name: 'skill',
@@ -41,20 +53,15 @@ function makeSource(options = {}) {
       if (options.result !== undefined) return options.result
       // Mirror the official shape: the query selects, so an empty query is the
       // only way to see everything.
-      const all = [
-        { name: 'backup-memory', description: '备份 DeepSeek Harness 的记忆库' },
-        { name: 'ji-zhang', description: '记账：一句话报一笔开销' },
-        { name: 'svg-diagram', description: '创建 SVG 图表' },
-      ]
       const query = String(args?.query ?? '')
-      return query === '' ? all : all.filter((s) => s.name.startsWith(query))
+      return query === '' ? list : list.filter((s) => s.name.startsWith(query))
     },
     onPick({ candidate }) {
       picks.push(candidate.name)
       return { text: `/${candidate.name} ` }
     },
   }
-  return { source, calls, picks }
+  return { source, calls, picks, list }
 }
 
 /**
@@ -335,5 +342,59 @@ test('warmSlashSkill ignores an empty session and swallows failures', () => {
   assert.doesNotThrow(() => warmSlashSkill('s1'))
   restore()
   assert.doesNotThrow(() => warmSlashSkill('s1'))
+})
+
+test('serves a primed Session from the cache instead of re-fetching', async () => {
+  const { source, calls, list } = makeSource()
+  const restore = wrapSkillSource(source, { rank })
+
+  // First call is a miss: it fetches and fills the cache.
+  const primed = await source.candidates({ sessionId: 'cache-1' }, { query: '' })
+  assert.equal(calls.length, 1)
+  assert.equal(primed.length, 3)
+
+  // The official source would now answer differently...
+  list.push({ name: 'brand-new-skill', description: '刚装的技能' })
+
+  // ...but a cache hit must answer from the cache, immediately.
+  const served = await source.candidates({ sessionId: 'cache-1' }, { query: '' })
+  assert.equal(served.length, 3)
+
+  // The background refresh catches up for the next open.
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  const refreshed = await source.candidates({ sessionId: 'cache-1' }, { query: '' })
+  assert.equal(refreshed.length, 4)
+  restore()
+})
+
+test('a cache hit still applies the ranking to the served list', async () => {
+  const { source } = makeSource()
+  const restore = wrapSkillSource(source, { rank })
+  await source.candidates({ sessionId: 'cache-2' }, { query: '' })
+  const items = await source.candidates({ sessionId: 'cache-2' }, { query: '记账' })
+  assert.deepEqual(items.map((s) => s.name), ['ji-zhang'])
+  restore()
+})
+
+test('one Session never serves another Session its cache', async () => {
+  const { source, calls } = makeSource()
+  const restore = wrapSkillSource(source, { rank })
+  await source.candidates({ sessionId: 'session-a' }, { query: '' })
+  assert.equal(calls.length, 1)
+  await source.candidates({ sessionId: 'session-b' }, { query: '' })
+  assert.equal(calls.length, 2)
+  restore()
+})
+
+test('priming a Session before the takeover lands is not lost', async () => {
+  // The picker mounts before the takeover installs, so the warm request arrives
+  // first and has nowhere to go. wrapSkillSource must consume it.
+  warmSlashSkill('early-session')
+  const { source, calls } = makeSource()
+  const restore = wrapSkillSource(source, { rank })
+  await new Promise((resolve) => setTimeout(resolve, 5))
+  assert.equal(calls.length, 1)
+  assert.deepEqual(calls[0].projection, { sessionId: 'early-session' })
+  restore()
 })
 

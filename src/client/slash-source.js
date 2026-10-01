@@ -48,13 +48,76 @@ let enhancementMode
 /** The source the takeover wrapped, so the catalogue can be primed ahead of time. */
 let takenOverSource
 
+/** The Session the picker last asked us to prime; consumed when the takeover lands. */
+let pendingSessionId
+
+/**
+ * Our own copy of the full display list, per Session.
+ *
+ * Why it exists: the menu highlights **the first group whose `candidates()`
+ * promise settles**, and our wrapper used to add an `await` hop of its own on
+ * top of the official one — two hops against the command source's chain. A
+ * settled-promise `await` is a microtask, so hop count decides, and the menu
+ * scrolled down to the command group. Serving the cached list returns without
+ * awaiting anything, so this group wins the settle race by construction.
+ *
+ * Kept fresh by the priming call and by a background refresh on every serve, so
+ * the worst case is one menu open behind a very recent skill install.
+ */
+const itemCache = new Map()
+
+/** Write a small diagnostic record the maintainer can read off disk. */
+function noteDiag(patch) {
+  try {
+    const key = 'dsh-skill-picker:diag'
+    const previous = JSON.parse(localStorage.getItem(key) ?? '{}')
+    localStorage.setItem(key, JSON.stringify({ ...previous, ...patch, at: new Date().toISOString() }))
+  } catch {
+    /* diagnostics must never break anything */
+  }
+}
+
+/**
+ * Refresh our cached display list in the background for the next open.
+ * Never awaited, never throws, and uses its own abort signal so the menu's own
+ * controller cannot cancel the refresh when it closes.
+ */
+function refreshCache(cacheKey, originalCandidates, self, projection, options) {
+  try {
+    const signal = typeof AbortController === 'function' ? new AbortController().signal : undefined
+    Promise.resolve()
+      .then(() => originalCandidates.call(self, projection, { ...options, query: '', signal }))
+      .then((items) => {
+        if (Array.isArray(items)) itemCache.set(cacheKey, items.slice())
+      })
+      .catch(() => {})
+  } catch {
+    /* a refresh that cannot start is not worth reporting */
+  }
+}
+
 /** Which mechanism upgrades the official `/` menu: 'runtime' once installed. */
 export function slashEnhancementMode() {
   return enhancementMode
 }
 
 /**
- * Prime the official skill catalogue for a Session.
+ * Test seam: drop every piece of module-level state.
+ *
+ * This module deliberately keeps state across calls (the wrapped source, the
+ * priming request, the per-Session cache), which makes tests order-dependent
+ * unless they start from a clean slate. Not used by the runtime.
+ * @internal
+ */
+export function __resetSlashStateForTests() {
+  itemCache.clear()
+  pendingSessionId = undefined
+  takenOverSource = undefined
+  enhancementMode = undefined
+}
+
+/**
+ * Prime the official skill catalogue for a Session, and fill our own cache.
  *
  * The slash menu highlights **the first group that settles** and then scrolls it
  * into view (`scrollIntoView({ block: "nearest" })`), and the highlight sticks
@@ -64,10 +127,12 @@ export function slashEnhancementMode() {
  *
  * Nothing warms the skill catalogue on a normal boot: `input-trigger` calls
  * `source.warm?.()` only from `sourceAdded`, which fires just for a source
- * registered *after* a session controller already exists. The official
- * `fetchCatalog()` promise therefore starts cold on the first `/` of a session,
- * loses the race to the command source's list RPC, and only the second open is
- * fast. Priming it as soon as the Session is known removes that first-open loss.
+ * registered *after* a session controller already exists.
+ *
+ * Called as soon as the picker knows its Session — which can happen BEFORE the
+ * takeover installs, since that retries while the official source registers. The
+ * Session id is therefore remembered and the warming is retried from
+ * `wrapSkillSource()`, otherwise a mount-time call would be silently lost.
  *
  * Best-effort by design: a failed warm changes nothing.
  *
@@ -75,12 +140,24 @@ export function slashEnhancementMode() {
  */
 export function warmSlashSkill(sessionId) {
   if (typeof sessionId !== 'string' || sessionId === '') return
+  // Ready now: prime directly and keep nothing pending. Not ready (the takeover
+  // has not installed yet): remember it, and wrapSkillSource() will consume it.
+  if (primeNow(sessionId)) pendingSessionId = undefined
+  else pendingSessionId = sessionId
+}
+
+/**
+ * Do the priming work once the takeover can actually serve it.
+ * @returns true when the source exists and was asked (or the cache already had it).
+ */
+function primeNow(sessionId) {
   const source = takenOverSource
-  if (source === null || source === undefined) return
+  if (source === null || source === undefined) return false
+  if (itemCache.has(sessionId)) return true
   try {
     if (typeof source.warm === 'function') {
       source.warm({ sessionId })
-      return
+      return true
     }
     if (typeof source.candidates === 'function') {
       const signal = typeof AbortController === 'function' ? new AbortController().signal : undefined
@@ -89,7 +166,9 @@ export function warmSlashSkill(sessionId) {
   } catch {
     /* priming is best-effort */
   }
+  return true
 }
+
 
 /** Whether an object is the official skill source. */
 function isSkillSource(source) {
@@ -187,8 +266,33 @@ export function wrapSkillSource(source, hooks = {}) {
   const wrappedCandidates = typeof rank === 'function' && typeof original.candidates === 'function'
     ? async function candidates(projection, args) {
         const options = args ?? {}
-        const everything = await original.candidates.call(this, projection, { ...options, query: '' })
         const query = String(options.query ?? '').trim()
+        const sessionId = projection?.sessionId
+        const cacheKey = typeof sessionId === 'string' ? sessionId : undefined
+        const cached = cacheKey === undefined ? undefined : itemCache.get(cacheKey)
+
+        // Cache hit: return WITHOUT awaiting anything. The returned promise is
+        // already resolved, so this group settles on the first microtask — ahead
+        // of any group whose candidates awaits even a settled promise.
+        if (cached !== undefined) {
+          noteDiag({ mode: 'runtime', servedFromCache: true, sessionId: cacheKey, query })
+          refreshCache(cacheKey, original.candidates, this, projection, options)
+          if (query === '') return cached
+          try {
+            return rank(cached, query)
+          } catch {
+            return cached
+          }
+        }
+
+        const everything = await original.candidates.call(this, projection, { ...options, query: '' })
+        if (cacheKey !== undefined && Array.isArray(everything)) {
+          // Store a SNAPSHOT, never the caller's array: the official source hands
+          // back a container it may keep and grow, and aliasing it would make the
+          // cache mutate underneath us.
+          itemCache.set(cacheKey, everything.slice())
+          noteDiag({ mode: 'runtime', servedFromCache: false, sessionId: cacheKey, primed: true, count: everything.length })
+        }
         if (query === '' || !Array.isArray(everything)) return everything
         try {
           return rank(everything, query)
@@ -245,6 +349,15 @@ export function wrapSkillSource(source, hooks = {}) {
 
   enhancementMode = 'runtime'
   takenOverSource = source
+  noteDiag({ mode: 'runtime', installed: true, took: taken.join('+') })
+  // A Session may have asked to be primed before the takeover landed (the
+  // picker mounts first, the takeover retries until the official source
+  // registers); consume that request exactly once.
+  if (pendingSessionId !== undefined) {
+    const sessionId = pendingSessionId
+    pendingSessionId = undefined
+    primeNow(sessionId)
+  }
 
   return () => {
     try {
@@ -260,6 +373,10 @@ export function wrapSkillSource(source, hooks = {}) {
       delete source[WRAPPED]
       enhancementMode = undefined
       if (takenOverSource === source) takenOverSource = undefined
+      itemCache.clear()
+      // A disposed takeover must not keep a priming request for a Session that
+      // may be gone by the time it is installed again.
+      pendingSessionId = undefined
     } catch {
       /* a source that became read-only keeps the wrapper; not fatal */
     }
@@ -295,6 +412,7 @@ export function installSlashFuzzy(inputTriggers, hooks = {}, options = {}) {
           // Loud on the give-up case. The first release of this module reached
           // for a helper the service does not have and then quietly did nothing
           // for ten seconds; nobody could tell it had never run.
+          noteDiag({ mode: 'none', gaveUp: true, attempts: maxAttempts })
           console.warn('[dsh-skill-picker] / takeover: the official "skill" trigger source was not found'
             + ` after ${maxAttempts} attempts — the / menu keeps the official matcher.`
             + ' See https://github.com/a735624258/dsh-skill-picker/issues/14')
