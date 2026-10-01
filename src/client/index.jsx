@@ -108,6 +108,71 @@ async function skillOp(action, payload = {}) {
 }
 
 /**
+ * Hand the caret back to the composer after a pick, at the END of the text.
+ *
+ * Picking from this panel used to leave the input filled but WITHOUT a caret:
+ * the click focused the row, the panel then unmounted, and focus fell back to
+ * the body — so the user had to click the input again before typing. Picking
+ * from the official `/` menu never has that problem, because the composer keeps
+ * focus there. 用户 reported exactly this difference.
+ *
+ * The first fix focused the editor but stopped there, and the caret landed at
+ * the START of the line: focusing a `contenteditable` with no selection is
+ * specified to put the caret at the beginning. So the caret is seated
+ * explicitly here.
+ *
+ * Seating a collapsed Range at the end is deliberately the *same* thing a click
+ * at the end of the line does, which is how the official editor normally
+ * receives a caret — it syncs its internal selection from the DOM. Merely
+ * calling `setDraft` again would not help: it early-returns when the text is
+ * unchanged, so the caret would never move.
+ *
+ * Best-effort: a failure here must never break the pick itself.
+ *
+ * @param from - a node inside the composer (our own button).
+ * @param onlyIfFocused - re-seat the caret only when the composer already holds
+ *   focus. Used by the delayed second call, so a fast click somewhere else is
+ *   never overridden.
+ * @returns whether an editor was found and focused.
+ */
+function focusComposer(from, onlyIfFocused = false) {
+  try {
+    let node = from
+    for (let depth = 0; depth < 8 && node !== null && node !== undefined; depth += 1) {
+      const editor = typeof node.querySelector === 'function'
+        ? node.querySelector('[contenteditable="true"], textarea')
+        : null
+      if (editor !== null && editor !== undefined) {
+        if (onlyIfFocused && document.activeElement !== editor) return false
+        if (typeof editor.focus === 'function') editor.focus()
+        try {
+          if (editor.isContentEditable === true) {
+            const range = document.createRange()
+            range.selectNodeContents(editor)
+            range.collapse(false)
+            const selection = window.getSelection()
+            if (selection !== null && selection !== undefined) {
+              selection.removeAllRanges()
+              selection.addRange(range)
+            }
+          } else if (typeof editor.setSelectionRange === 'function') {
+            const end = String(editor.value ?? '').length
+            editor.setSelectionRange(end, end)
+          }
+        } catch {
+          /* the focus alone is still an improvement over no caret at all */
+        }
+        return true
+      }
+      node = node.parentElement
+    }
+  } catch {
+    /* focus is a convenience, never a requirement */
+  }
+  return false
+}
+
+/**
  * Whether a skill entry may be offered by a human-facing surface (this panel
  * and the `/` completion it feeds). The official `skills/list` DTO
  * (`SkillEntry`) carries only `modelInvocable` — the host has already filtered
@@ -157,9 +222,12 @@ function groupByPinned(skills, usage, pinned) {
     else rest.push(skill)
   }
   return [
-    { title: '📌 置顶', items: pinnedList },
-    { title: '🔥 最近使用', items: recent },
-    { title: '🗂️ 全部', items: rest },
+    // Plain titles, no emoji: these are section headings, and DSH's own
+    // headings (侧栏的「工作区」/「会话」) are plain text. 用户: "加图标，那前面
+    // 一团火，这种图标看着不像 DSH 的风格".
+    { title: '置顶', items: pinnedList },
+    { title: '最近使用', items: recent },
+    { title: '全部', items: rest },
   ].filter((group) => group.items.length > 0)
 }
 
@@ -275,6 +343,19 @@ const buttonStyle = {
 }
 
 /**
+ * DSH's own UI font, so the panel reads as part of the harness rather than as a
+ * bolted-on popup.
+ *
+ * The skill NAME used to be rendered in `--ds-font-family-code` (the monospace
+ * face) because a `/skill` reads like a command — 用户 spotted it immediately:
+ * "我想你用和右下角选择模型里的英文和中文一样的字体". The model picker uses
+ * `--dsw-font-family`, so that is what everything here uses now, and the sizes
+ * follow the composer (14px / 24px) instead of the browser's default button size
+ * (13.3333px), which is what the rows had been falling back to.
+ */
+const FONT_FAMILY = 'var(--dsw-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif)'
+
+/**
  * Panel placement.
  *
  * Fixed (not absolute) and anchored to the RIGHT EDGE OF THE WINDOW, with the
@@ -299,19 +380,55 @@ const popoverStyle = {
   boxShadow: '0 8px 28px rgba(0,0,0,0.35)',
   overflow: 'hidden',
   zIndex: 1000,
+  fontFamily: FONT_FAMILY,
+  fontSize: '14px',
+  lineHeight: '24px',
 }
 
+/**
+ * The search field, styled like the composer's own pickers.
+ *
+ * 用户: "我这个搜索框能不能变成这个模型搜索的样式？我感觉确实可以跟 DSH 去统一一下".
+ * The model picker's field (which is not an <input>, so its computed style could
+ * not be read) is visibly BORDERLESS with a faint fill; this one had a 1px
+ * border. So: a transparent border (keeps the geometry identical), the same
+ * faint fill, and — because a borderless field needs some focus affordance — a
+ * thin ring while focused, applied from `searchFocus` below since inline styles
+ * cannot express `:focus`.
+ *
+ * Height: it used to be 36px (padding 6+6 + line-height 22 + border 1+1). 用户
+ * tuned it by eye: "改成30看看，就是行高减个六" → "再加回3吧" → "32吧", so 32px,
+ * as an explicit border-box height with the text centred.
+ *
+ * Worth remembering: the first two numbers never actually rendered — the panel
+ * is a column flex container with a max-height, so the field was being shrunk to
+ * 21px regardless of what the style said. Only after pinning `flex: none` did
+ * the declared height take effect at all.
+ */
 const searchStyle = {
   boxSizing: 'border-box',
   width: 'calc(100% - 16px)',
+  height: '32px',
+  // The panel is a column flex container with a max-height, so any child that
+  // can shrink will: the field measured 21px instead of the declared height
+  // until this was pinned. The list below is the thing that should scroll.
+  flex: 'none',
   margin: '8px',
-  padding: '6px 10px',
-  border: '1px solid var(--dsw-alias-border-l1, rgba(128,128,128,0.3))',
+  padding: '0 10px',
+  border: '1px solid transparent',
   borderRadius: '8px',
   background: 'var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,0.1))',
   color: 'var(--dsw-alias-label-primary, #e6ebf2)',
-  fontSize: '13px',
+  fontFamily: FONT_FAMILY,
+  fontSize: '14px',
+  lineHeight: '20px',
   outline: 'none',
+}
+
+/** Focus state for the borderless search field. */
+const searchFocusStyle = {
+  background: 'var(--dsw-alias-interactive-bg-active, var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,0.16)))',
+  boxShadow: '0 0 0 1px var(--dsw-alias-border-l2, rgba(128,128,128,0.35))',
 }
 
 const listStyle = {
@@ -333,16 +450,23 @@ const itemStyle = {
   color: 'var(--dsw-alias-label-primary, #e6ebf2)',
   cursor: 'pointer',
   textAlign: 'left',
+  // Explicit: a bare <button> keeps the browser's own 13.3333px / Arial.
+  fontFamily: FONT_FAMILY,
+  fontSize: '14px',
+  lineHeight: '22px',
+  fontWeight: 400,
 }
 
 const nameStyle = {
-  fontFamily: 'var(--ds-font-family-code, ui-monospace, monospace)',
-  fontSize: '13px',
-  fontWeight: 500,
+  fontFamily: FONT_FAMILY,
+  fontSize: '14px',
+  fontWeight: 400,
+  lineHeight: '22px',
 }
 
 const descStyle = {
   color: 'var(--dsw-alias-label-tertiary, #8a94a6)',
+  fontFamily: FONT_FAMILY,
   fontSize: '12px',
   lineHeight: '16px',
   overflow: 'hidden',
@@ -354,21 +478,8 @@ const descStyle = {
 const statusStyle = {
   padding: '12px',
   color: 'var(--dsw-alias-label-tertiary, #8a94a6)',
+  fontFamily: FONT_FAMILY,
   fontSize: '13px',
-}
-
-/** One row action (关闭 / 定位 / 卸载); matches the pin button's weight. */
-const actionSpanStyle = {
-  flex: 'none',
-  marginLeft: '6px',
-  padding: '2px 4px',
-  borderRadius: '6px',
-  fontSize: '12px',
-  lineHeight: '16px',
-  cursor: 'pointer',
-  color: 'var(--dsw-alias-label-tertiary, #8a94a6)',
-  opacity: 0.55,
-  userSelect: 'none',
 }
 
 /** Result line under the list, with an optional undo for uninstall. */
@@ -385,27 +496,52 @@ const noticeStyle = {
   color: 'var(--dsw-alias-label-secondary, #b6bfcc)',
 }
 
-/** The right-click / long-press actions menu, positioned against the viewport. */
+/**
+ * The right-click / long-press actions menu, positioned against the viewport.
+ *
+ * Colours are DSH theme variables, and the background is deliberately the SAME
+ * one the panel above it already uses (`--dsw-specific-tip`):
+ *
+ *   panel + menu  --dsw-specific-tip            (opaque in both themes)
+ *   text          --dsw-alias-label-primary     (flips with the theme)
+ *   hover         --dsw-alias-interactive-bg-hover
+ *
+ * Two wrong turns here, both caught by 用户:
+ *
+ *  1. `--dsw-alias-bg-elevated` does not exist in DSH at all, so a hardcoded
+ *     dark fallback always won while the text kept following the theme —
+ *     dark-on-dark, a measured contrast ratio of 1.25 on the light theme.
+ *  2. `--dsw-specific-menu` does exist, but on the desktop's dark theme it is
+ *     `#43454a73`: alpha 0.45, meant to sit behind DSH's own backdrop blur.
+ *     With no blur the conversation showed straight through the menu.
+ *
+ * `--dsw-specific-tip` is opaque in both themes and is exactly what the panel
+ * beside it uses, so the two match. `backdropFilter` stays as a safety net in
+ * case a kernel ever ships a translucent value there.
+ */
 const menuStyle = {
   position: 'fixed',
   zIndex: 2147483000,
   minWidth: '196px',
   padding: '4px',
   borderRadius: '10px',
-  border: '1px solid var(--dsw-alias-border-secondary, rgba(128,128,128,0.24))',
-  background: 'var(--dsw-alias-bg-elevated, #23262e)',
+  border: '1px solid var(--dsw-alias-border-l1, rgba(128,128,128,0.35))',
+  background: 'var(--dsw-specific-tip, #23262e)',
+  backdropFilter: 'blur(8px)',
   boxShadow: '0 8px 28px rgba(0,0,0,0.36)',
-  color: 'var(--dsw-alias-label-primary, #e6e9ef)',
-  fontSize: '13px',
+  color: 'var(--dsw-alias-label-primary, #e6ebf2)',
+  fontFamily: FONT_FAMILY,
+  fontSize: '14px',
+  lineHeight: '24px',
   userSelect: 'none',
 }
 
 /** The skill name at the top of the menu (the thing being acted on). */
 const menuHeaderStyle = {
   padding: '6px 10px 4px',
-  fontSize: '11px',
+  fontSize: '12px',
   color: 'var(--dsw-alias-label-tertiary, #8a94a6)',
-  borderBottom: '1px solid var(--dsw-alias-border-secondary, rgba(128,128,128,0.18))',
+  borderBottom: '1px solid var(--dsw-alias-border-l1, rgba(128,128,128,0.28))',
   marginBottom: '4px',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -418,6 +554,19 @@ const menuItemStyle = {
   borderRadius: '6px',
   cursor: 'pointer',
   whiteSpace: 'nowrap',
+}
+
+/**
+ * Hover feedback for a menu row. Inline styles cannot express `:hover`, and the
+ * panel's own rows already use this same mutate-on-hover approach.
+ */
+const menuItemHandlers = {
+  onMouseEnter: (event) => {
+    event.currentTarget.style.background = 'var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,0.16))'
+  },
+  onMouseLeave: (event) => {
+    event.currentTarget.style.background = 'transparent'
+  },
 }
 
 /** The picker's bolt glyph: DeepSeek palette gradient + slim stroke. */
@@ -461,6 +610,18 @@ function SkillPickerButton(props) {
   /** Result line under the list: { kind, text, undo? }. */
   const [notice, setNotice] = useState(undefined)
   /**
+   * The notice is a toast, not a fixture — it dismisses itself.
+   *
+   * 用户 caught it sitting on screen indefinitely after a trivial "located it in
+   * the file manager" action. Anything carrying an undo gets a much longer
+   * window, because dismissing it also removes the only way back.
+   */
+  useEffect(() => {
+    if (notice === undefined) return undefined
+    const timer = window.setTimeout(() => setNotice(undefined), notice.undo === undefined ? 2600 : 10000)
+    return () => window.clearTimeout(timer)
+  }, [notice])
+  /**
    * The right-click menu: { x, y, skill, disabled }.
    *
    * Actions live here instead of on the row so the list stays a list — one
@@ -469,6 +630,16 @@ function SkillPickerButton(props) {
    * menu, because a phone has no right button.
    */
   const [menu, setMenu] = useState(undefined)
+  /**
+   * Which list the panel is showing: 'all' or the closed-skills view ('off').
+   *
+   * The closed skills used to be a permanent section under the list; 用户 asked
+   * for them behind a small entry at the bottom-right instead, because a
+   * section that is almost never used should not hold vertical space forever.
+   */
+  const [view, setView] = useState('all')
+  /** The search field is borderless now, so focus needs its own affordance. */
+  const [searchFocus, setSearchFocus] = useState(false)
   const [query, setQuery] = useState('')
   const [usage, setUsage] = useState(() => loadUsage())
   const [pinned, setPinned] = useState(() => loadPinned())
@@ -563,7 +734,10 @@ function SkillPickerButton(props) {
       const res = await fetch(`/dsh-skill-picker/skills${cwd}`, { headers: { accept: 'application/json' } })
       const json = await res.json()
       if (!json.ok) throw new Error(json.error || 'bad response')
-      setSkills((Array.isArray(json.skills) ? json.skills : []).filter(isUserFacingSkill))
+      const listed = Array.isArray(json.skills) ? json.skills : []
+      // The scan deliberately reports switched-off skills too (that is how the
+      // closed view can list them), but they must never enter THIS list.
+      setSkills(listed.filter((skill) => isUserFacingSkill(skill) && skill.disabled !== true))
       setSource('host')
     } catch (cause) {
       setError(String(cause?.message ?? cause))
@@ -700,6 +874,10 @@ function SkillPickerButton(props) {
       // SHARED_STATE_EVENT, which is what refreshes `usage`/`pinned` here.
       void syncSharedState()
       setUsage(loadUsage())
+      // A fresh open starts clean: a toast from last time is stale by then, and
+      // the panel should not reopen inside the closed-skills view.
+      setNotice(undefined)
+      setView('all')
       void load()
       void loadDisabled()
     }
@@ -730,6 +908,18 @@ function SkillPickerButton(props) {
 
     setOpen(false)
     setQuery('')
+
+    // Put the caret back in the composer (see `focusComposer`). In a rAF so the
+    // panel has unmounted and React has flushed the draft write first.
+    const from = boxRef.current
+    window.requestAnimationFrame(() => {
+      focusComposer(from)
+      // Second, guarded seat: a rich editor may re-apply its own selection
+      // right after being focused, which would drop the caret back to the
+      // start. Re-assert the end caret shortly after — but only if the composer
+      // still holds focus, so a fast click elsewhere is never overridden.
+      window.setTimeout(() => focusComposer(from, true), 60)
+    })
   }
 
   const togglePin = (name) => {
@@ -750,7 +940,23 @@ function SkillPickerButton(props) {
 
   // Grouped ordering: pinned first (manual), then usage-ranked (recent then
   // frequent then untouched by name). Shared rule with the `/` completion.
-  const groups = groupByPinned(skills ?? [], usage, pinned)
+  /**
+   * The main list, with switched-off skills removed BY NAME.
+   *
+   * The official RPC should not report a disabled skill at all (the official
+   * provider keys on the entry file name), and the host scan reports them on
+   * purpose so the closed view can work — but this is the one place the main
+   * list is actually built, so the invariant is enforced here no matter which
+   * source produced the data.
+   *
+   * 用户 caught the leak: a skill he had closed was still listed under 全部.
+   */
+  const disabledNames = new Set(disabledSkills.map((skill) => skill.name))
+  const groups = groupByPinned(
+    (skills ?? []).filter((skill) => !disabledNames.has(skill.name)),
+    usage,
+    pinned,
+  )
   const flat = groups.flatMap((group) => group.items)
 
   const filtered = (() => {
@@ -768,6 +974,17 @@ function SkillPickerButton(props) {
   // list into one flat, pinned-first result set.
   const showTitles = query.trim() === '' && groups.length > 1
   const filteredNames = new Set(filtered.map((skill) => skill.name))
+
+  /**
+   * The closed-skills view, filtered by the same search box. The official RPC
+   * never reports these, so without this view a disabled skill would be
+   * unreachable — that is still true, it just lives one click away now.
+   */
+  const offFiltered = (() => {
+    const q = query.trim().toLowerCase()
+    if (q === '') return disabledSkills
+    return disabledSkills.filter((skill) => matchRank(skill, q) < 4)
+  })()
 
   // Keyboard navigation (#1): reset highlight when the query changes, keep it
   // in range when the result list shrinks, and keep the highlighted row visible.
@@ -801,7 +1018,12 @@ function SkillPickerButton(props) {
   }
 
   return (
-    <div ref={boxRef} style={{ position: 'relative', display: 'inline-flex', flex: 'none' }}>
+    // The marker is how dsh-pocket's mobile "file open guard" learns to leave
+    // this panel alone: its rows are <button>s whose text starts with "/技能名",
+    // which its looksLikeFilePath() reads as a Windows path, so it swallowed the
+    // click and popped "手机上无法直接打开电脑上的文件" (see the pocket patch of
+    // 2026-10-02). Guarded there, marked here.
+    <div ref={boxRef} data-dsh-skill-picker="1" style={{ position: 'relative', display: 'inline-flex', flex: 'none' }}>
       <button
         type="button"
         onClick={toggle}
@@ -820,8 +1042,10 @@ function SkillPickerButton(props) {
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={onKeyDown}
+            onFocus={() => setSearchFocus(true)}
+            onBlur={() => setSearchFocus(false)}
             placeholder="搜索技能…（↑↓ 选择，Enter 插入）"
-            style={searchStyle}
+            style={{ ...searchStyle, ...(searchFocus ? searchFocusStyle : {}) }}
             autoFocus
           />
           {error !== undefined ? (
@@ -831,7 +1055,38 @@ function SkillPickerButton(props) {
           ) : (
             <>
               <div style={listStyle}>
-                {filtered.length === 0 ? (
+                {view === 'off' ? (
+                  offFiltered.length === 0 ? (
+                    <div style={statusStyle}>
+                      {query.trim() === '' ? '没有被关闭的技能' : '没有匹配的已关闭技能'}
+                    </div>
+                  ) : (
+                    offFiltered.map((skill) => (
+                      <div
+                        key={`off-${skill.name}`}
+                        onContextMenu={(event) => {
+                          event.preventDefault()
+                          event.stopPropagation()
+                          openMenu(event, skill, true)
+                        }}
+                        onTouchStart={(event) => {
+                          const touch = event.touches?.[0]
+                          if (touch === undefined) return
+                          longPressRef.current = window.setTimeout(
+                            () => openMenu({ clientX: touch.clientX, clientY: touch.clientY }, skill, true),
+                            500,
+                          )
+                        }}
+                        onTouchEnd={() => window.clearTimeout(longPressRef.current)}
+                        onTouchMove={() => window.clearTimeout(longPressRef.current)}
+                        style={{ ...itemStyle, flexDirection: 'column', alignItems: 'flex-start', opacity: 0.6 }}
+                      >
+                        <span style={nameStyle}>{`/${skill.name}`}</span>
+                        <span style={descStyle}>{skill.description ?? ''}</span>
+                      </div>
+                    ))
+                  )
+                ) : filtered.length === 0 ? (
                   <div style={statusStyle}>没有匹配的技能</div>
                 ) : (() => {
                   let itemIndex = 0
@@ -884,32 +1139,10 @@ function SkillPickerButton(props) {
                         <span style={nameStyle}>{`/${skill.name}`}</span>
                         <span style={descStyle}>{skill.description ?? ''}</span>
                       </span>
-                      <span
-                        role="button"
-                        tabIndex={-1}
-                        title={pinned.includes(skill.name) ? '取消置顶' : '置顶到列表顶部'}
-                        aria-label={pinned.includes(skill.name) ? '取消置顶' : '置顶'}
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          togglePin(skill.name)
-                        }}
-                        style={{
-                          flex: 'none',
-                          marginLeft: '6px',
-                          padding: '2px 4px',
-                          borderRadius: '6px',
-                          fontSize: '12px',
-                          lineHeight: '16px',
-                          cursor: 'pointer',
-                          color: pinned.includes(skill.name)
-                            ? 'var(--dsw-alias-label-primary-bluish, #4cc9f0)'
-                            : 'var(--dsw-alias-label-tertiary, #8a94a6)',
-                          opacity: pinned.includes(skill.name) ? 1 : 0.55,
-                          userSelect: 'none',
-                        }}
-                      >
-                        {pinned.includes(skill.name) ? '📌' : '📍'}
-                      </span>
+                      {/* No pin glyph on the row any more: 置顶/取消置顶 lives in
+                          the right-click menu, and the 置顶 group already shows
+                          which skills are pinned. 用户: "那个置顶的按钮也不需要了
+                          吧，毕竟右键它就能有置顶". */}
                     </button>
                   )
                   if (!showTitles) {
@@ -927,9 +1160,14 @@ function SkillPickerButton(props) {
                             justifyContent: 'space-between',
                             padding: '6px 10px 2px',
                             color: 'var(--dsw-alias-label-tertiary, #8a94a6)',
-                            fontSize: '11px',
-                            fontWeight: 600,
-                            letterSpacing: '0.04em',
+                            // Measured against DSH's own sidebar heading
+                            // (「工作区」): it is 14px / weight 400 / normal
+                            // letter-spacing. Mine had been 11px / 600 / 0.04em,
+                            // which is exactly what made it look foreign.
+                            fontSize: '14px',
+                            fontWeight: 400,
+                            letterSpacing: 'normal',
+                            lineHeight: '24px',
                           }}
                         >
                           <span>{group.title}</span>
@@ -959,70 +1197,52 @@ function SkillPickerButton(props) {
                   )}
                 </div>
               )}
-              {/* Skills switched off. The official RPC never reports these, so
-                  without this section a disabled skill would be unreachable. */}
-              {disabledSkills.length > 0 && (
-                <div style={{ marginTop: '4px' }}>
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '6px 10px 2px',
-                      color: 'var(--dsw-alias-label-tertiary, #8a94a6)',
-                      fontSize: '11px',
-                      fontWeight: 600,
-                      letterSpacing: '0.04em',
-                    }}
-                  >
-                    <span>⏻ 已关闭</span>
-                    <span style={{ opacity: 0.7 }}>{disabledSkills.length}</span>
-                  </div>
-                  {disabledSkills.map((skill) => (
-                    <div
-                      key={`off-${skill.name}`}
-                      onContextMenu={(event) => {
-                        event.preventDefault()
-                        event.stopPropagation()
-                        openMenu(event, skill, true)
-                      }}
-                      style={{
-                        ...itemStyle,
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        opacity: 0.55,
-                      }}
-                    >
-                      <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '2px', flex: '1', minWidth: '0' }}>
-                        <span style={nameStyle}>{`/${skill.name}`}</span>
-                        <span style={descStyle}>{skill.description ?? ''}</span>
-                      </span>
-                      <span
-                        role="button"
-                        tabIndex={-1}
-                        title="重新开启（把 SKILL.md.disabled 改回 SKILL.md）"
-                        aria-label="重新开启"
-                        onClick={() => void runSkillOp('enable', skill)}
-                        style={actionSpanStyle}
-                      >
-                        {busySkill === skill.name ? '…' : '⏻ 开启'}
-                      </span>
-                      <span
-                        role="button"
-                        tabIndex={-1}
-                        title="在文件管理器中定位"
-                        aria-label="在文件管理器中定位"
-                        onClick={() => void runSkillOp('reveal', skill)}
-                        style={actionSpanStyle}
-                      >
-                        📂
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <div style={{ margin: '0 10px 8px', fontSize: '11px', color: 'var(--dsw-alias-label-tertiary, #8a94a6)' }}>
-                右键技能 = 置顶 / 关闭 / 定位 / 卸载（手机长按）
+              {/* The footer: a short hint on the left, the 「已关闭」 entry on the
+                  right. It used to be a full section listing every disabled
+                  skill — too much room for something reached rarely (用户's
+                  call), so it is a small chip that opens its own view.
+                  The hint itself: first written long ("右键技能 = 置顶 / 关闭 /
+                  定位 / 卸载（手机长按）"), which did not line up with the rows
+                  and got clipped to "手机…" — then shortened to this and kept
+                  permanently, because at this length it is quiet and fits
+                  (用户: "我感觉你变成这一行就不错，那你就可以永久留着了").
+                  Its left margin matches the row text (list padding 6 + row
+                  padding 10) so it lines up with everything above it. */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'flex-end',
+                  gap: '8px',
+                  margin: '0 12px 8px 16px',
+                  fontSize: '12px',
+                  lineHeight: '18px',
+                  color: 'var(--dsw-alias-label-tertiary, #8a94a6)',
+                }}
+              >
+                <span style={{ minWidth: '0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {view === 'off' ? '右键可开启 · 手机长按' : '右键可管理 · 手机长按'}
+                </span>
+                <span
+                  role="button"
+                  tabIndex={-1}
+                  title={view === 'off' ? '回到全部技能' : '查看被关闭的技能'}
+                  onClick={() => {
+                    setView(view === 'off' ? 'all' : 'off')
+                    setQuery('')
+                  }}
+                  style={{
+                    flex: 'none',
+                    marginLeft: 'auto',
+                    padding: '2px 8px',
+                    borderRadius: '999px',
+                    border: '1px solid var(--dsw-alias-border-l1, rgba(128,128,128,0.35))',
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {view === 'off' ? '← 全部技能' : `已关闭 ${disabledSkills.length}`}
+                </span>
               </div>
               {/* The actions menu. Rendered here (not inside the row) so it can
                   be positioned against the viewport and never clipped by the
@@ -1038,18 +1258,20 @@ function SkillPickerButton(props) {
                       style={menuItemStyle}
                       role="button"
                       tabIndex={-1}
+                      {...menuItemHandlers}
                       onClick={() => {
                         setMenu(undefined)
                         togglePin(menu.skill.name)
                       }}
                     >
-                      {pinned.includes(menu.skill.name) ? '📌 取消置顶' : '📌 置顶到顶部'}
+                      {pinned.includes(menu.skill.name) ? '取消置顶' : '置顶到顶部'}
                     </div>
                   )}
                   <div
                     style={menuItemStyle}
                     role="button"
                     tabIndex={-1}
+                    {...menuItemHandlers}
                     onClick={() => {
                       const target = menu.skill
                       const turningOff = !menu.disabled
@@ -1057,25 +1279,27 @@ function SkillPickerButton(props) {
                       void runSkillOp(turningOff ? 'disable' : 'enable', target)
                     }}
                   >
-                    {menu.disabled ? '⏻ 开启' : '⏻ 关闭（agent 也不再加载）'}
+                    {menu.disabled ? '开启' : '关闭（agent 也不再加载）'}
                   </div>
                   <div
                     style={menuItemStyle}
                     role="button"
                     tabIndex={-1}
+                    {...menuItemHandlers}
                     onClick={() => {
                       const target = menu.skill
                       setMenu(undefined)
                       void runSkillOp('reveal', target)
                     }}
                   >
-                    📂 在文件管理器中定位
+                    在文件管理器中定位
                   </div>
                   {!menu.disabled && (
                     <div
-                      style={{ ...menuItemStyle, color: 'var(--dsw-alias-label-error, #ff7b72)' }}
+                      style={{ ...menuItemStyle, color: 'var(--dsw-alias-label-error, #e5534b)' }}
                       role="button"
                       tabIndex={-1}
+                      {...menuItemHandlers}
                       onClick={() => {
                         const target = menu.skill
                         setMenu(undefined)
@@ -1083,7 +1307,7 @@ function SkillPickerButton(props) {
                         void runSkillOp('uninstall', target)
                       }}
                     >
-                      🗑 卸载（移入备份，可撤回）
+                      卸载（移入备份，可撤回）
                     </div>
                   )}
                 </div>
