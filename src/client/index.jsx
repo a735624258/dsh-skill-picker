@@ -274,10 +274,21 @@ const buttonStyle = {
   flex: 'none',
 }
 
+/**
+ * Panel placement.
+ *
+ * Fixed (not absolute) and anchored to the RIGHT EDGE OF THE WINDOW, with the
+ * vertical offset measured from the ⚡ button so it still opens just above the
+ * composer.
+ *
+ * Why not `absolute; right: 0` on the button's own wrapper — which is what it
+ * used to be: the ⚡ sits next to the model picker, well left of the composer's
+ * right edge, so the panel was right-aligned to *that* and threw itself across
+ * the middle of the conversation, covering the text. 用户 spotted it.
+ */
 const popoverStyle = {
-  position: 'absolute',
-  bottom: 'calc(100% + 8px)',
-  right: '0',
+  position: 'fixed',
+  right: '24px',
   width: '340px',
   maxHeight: '320px',
   display: 'flex',
@@ -466,6 +477,12 @@ function SkillPickerButton(props) {
   const itemRefs = useRef([])
   /** Pending long-press timer for the touch path (see the menu below). */
   const longPressRef = useRef(0)
+  /**
+   * Distance from the window bottom to the panel's bottom edge, measured from
+   * the ⚡ button each time the panel opens. See `popoverStyle`: the horizontal
+   * anchor is the window's right edge, only the height follows the button.
+   */
+  const [panelBottom, setPanelBottom] = useState(88)
 
   // The usage store is shared with the official `/` menu: picks made there go
   // through window.__dshSkillPickerTrack (localStorage only). Refresh this
@@ -671,6 +688,13 @@ function SkillPickerButton(props) {
 
   const toggle = () => {
     if (!open) {
+      // Measure before opening so the panel is already in place on its first
+      // paint (no visible jump).
+      const el = boxRef.current
+      if (el !== null) {
+        const rect = el.getBoundingClientRect()
+        setPanelBottom(Math.max(64, Math.round(window.innerHeight - rect.top + 8)))
+      }
       // Pull first: a pin or a pick made on another client (desktop ↔ web ↔
       // phone) should be visible the moment this panel opens. The pull fires
       // SHARED_STATE_EVENT, which is what refreshes `usage`/`pinned` here.
@@ -791,7 +815,7 @@ function SkillPickerButton(props) {
         <BoltIcon />
       </button>
       {open && (
-        <div style={popoverStyle}>
+        <div style={{ ...popoverStyle, bottom: `${panelBottom}px` }}>
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
