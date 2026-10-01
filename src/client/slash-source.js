@@ -276,8 +276,11 @@ export function wrapSkillSource(source, hooks = {}) {
         if (cached !== undefined) {
           noteDiag({ mode: 'runtime', servedFromCache: true, sessionId: cacheKey, query })
           refreshCache(cacheKey, original.candidates, this, projection, options)
-          if (query === '') return cached
           try {
+            // Rank even for an empty query: that is what puts the pinned skills
+            // on top, exactly like the ⚡ panel. Returning the official list
+            // untouched here made the two lists disagree — the menu looked
+            // alphabetical while the panel led with 置顶.
             return rank(cached, query)
           } catch {
             return cached
@@ -292,7 +295,7 @@ export function wrapSkillSource(source, hooks = {}) {
           itemCache.set(cacheKey, everything.slice())
           noteDiag({ mode: 'runtime', servedFromCache: false, sessionId: cacheKey, primed: true, count: everything.length })
         }
-        if (query === '' || !Array.isArray(everything)) return everything
+        if (!Array.isArray(everything)) return everything
         try {
           return rank(everything, query)
         } catch {

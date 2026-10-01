@@ -162,15 +162,22 @@ test('asks the official candidates for the whole catalogue, then ranks it', asyn
   restore()
 })
 
-test('an empty query returns the official result untouched', async () => {
+test('an empty query IS ranked, so pinned skills lead the menu', async () => {
+  // The menu and the ⚡ panel must agree. The panel ranks an empty query (that
+  // is what puts 置顶 on top); returning the official list untouched here made
+  // the menu look alphabetical while the panel led with 置顶.
   const { source } = makeSource()
+  const seen = []
   const restore = wrapSkillSource(source, {
-    rank: () => {
-      throw new Error('ranking must not run for an empty query')
+    rank: (items, query) => {
+      seen.push(query)
+      return [...items].sort((a, b) => Number(b.name === 'ji-zhang') - Number(a.name === 'ji-zhang'))
     },
   })
   const items = await source.candidates({ sessionId: 's1' }, { query: '' })
+  assert.deepEqual(seen, [''])
   assert.equal(items.length, 3)
+  assert.equal(items[0].name, 'ji-zhang', 'the pinned skill must come first')
   restore()
 })
 
