@@ -23,6 +23,7 @@ import {
   findSkillSource,
   installSlashFuzzy,
   isSkillSourceWrapped,
+  slashEnhancementMode,
   wrapSkillSource,
 } from '../src/client/slash-source.js'
 
@@ -55,25 +56,74 @@ function makeSource(options = {}) {
   return { source, calls, picks }
 }
 
-/** A minimal fake of the injected inputTriggers service. */
+/**
+ * The REAL shape of `ctx.inputTriggers` on DSH 0.2.0-rc.2, read out of
+ * `dsh-client-ui-input-trigger/lib/client.js`:
+ *
+ *   var InputTriggerService = class extends Service {
+ *     static inject = ["sessions"];
+ *     live = { sources: [], controllers: new WeakMapWithValues() };
+ *     constructor(ctx) { super(ctx, "inputTriggers"); ... }
+ *     registerSource(src) { ... live.sources.push(src) ... }
+ *     sessionOf(...) { ... }
+ *   }
+ *
+ * Its members are exactly: inject, live, constructor, registerSource, sessionOf,
+ * sessions — there is NO `sources()` and NO `all()` on the service. Those two
+ * live on the per-session controller's `roster`
+ * (`{ sources: (trigger) => live.sources.filter(...), all: () => live.sources }`).
+ *
+ * Reaching for the roster helper on the service is what made the first release
+ * of this module do nothing at all — silently, for ten seconds. The tests below
+ * pin the real shape so that cannot come back.
+ */
 function makeService(sources) {
   return {
-    sources: (trigger) => sources.filter((s) => s.trigger === trigger),
-    all: () => sources,
+    live: { sources, controllers: { values: [] } },
+    registerSource: (src) => {
+      sources.push(src)
+      return () => {}
+    },
+    sessionOf: () => undefined,
+    sessions: () => undefined,
+  }
+}
+
+/** The roster object a session controller is built with (a different shape). */
+function makeRosterService(sources) {
+  return {
+    roster: {
+      sources: (trigger) => sources.filter((s) => s.trigger === trigger),
+      all: () => sources,
+    },
   }
 }
 
 const rank = (items, query) => items.filter((s) => s.name.includes(query) || s.description.includes(query))
 
-test('finds the official skill source through sources(trigger)', () => {
+test('finds the source through the real service shape (live.sources)', () => {
   const { source } = makeSource()
-  const service = makeService([{ trigger: '@', name: 'file' }, source])
+  const registered = [{ trigger: '@', name: 'file' }, source]
+  const service = makeService(registered)
+  // Guard the premise: this service really has no roster helper of its own.
+  assert.equal(service.sources, undefined)
+  assert.equal(service.all, undefined)
   assert.equal(findSkillSource(service), source)
 })
 
-test('falls back to all() when the per-trigger helper yields nothing', () => {
+test('finds the source on an empty live.sources is not the same as finding one', () => {
+  const service = makeService([])
+  assert.equal(findSkillSource(service), undefined)
+})
+
+test('also copes with the roster helper shape', () => {
   const { source } = makeSource()
-  const service = { sources: () => [], all: () => [source] }
+  assert.equal(findSkillSource(makeRosterService([source])), source)
+})
+
+test('passes on an unrelated source and still finds the skill one', () => {
+  const { source } = makeSource()
+  const service = makeService([{ trigger: '@', name: 'file' }, { trigger: '/', name: 'command' }, source])
   assert.equal(findSkillSource(service), source)
 })
 
@@ -83,6 +133,11 @@ test('returns undefined while the source is not registered or the service is abs
   assert.equal(findSkillSource(makeService([{ trigger: '@', name: 'file' }])), undefined)
   // A throwing service must degrade, not propagate.
   assert.equal(findSkillSource({ sources: () => { throw new Error('boom') } }), undefined)
+  assert.equal(findSkillSource({
+    get live() {
+      throw new Error('boom')
+    },
+  }), undefined)
 })
 
 test('asks the official candidates for the whole catalogue, then ranks it', async () => {
@@ -214,17 +269,34 @@ test('installSlashFuzzy retries until the official source registers', async () =
   await new Promise((resolve) => setTimeout(resolve, 40))
   assert.equal(isSkillSourceWrapped(source), true)
   assert.equal(source.order, -1)
+  // The ⚡ panel footer reads this, so it doubles as the "is it actually on?" signal.
+  assert.equal(slashEnhancementMode(), 'runtime')
   const items = await source.candidates({ sessionId: 's1' }, { query: '记账' })
   assert.deepEqual(items.map((s) => s.name), ['ji-zhang'])
   dispose()
   assert.equal(isSkillSourceWrapped(source), false)
   assert.equal(source.order, 2)
+  assert.equal(slashEnhancementMode(), undefined)
 })
 
-test('installSlashFuzzy gives up quietly when the source never appears', async () => {
+test('installSlashFuzzy gives up loudly when the source never appears', async () => {
   const service = makeService([])
-  const dispose = installSlashFuzzy(service, { rank, order: -1 }, { attempts: 2, intervalMs: 5 })
-  await new Promise((resolve) => setTimeout(resolve, 30))
+  const warnings = []
+  const originalWarn = console.warn
+  console.warn = (...args) => warnings.push(args.join(' '))
+  let dispose
+  try {
+    dispose = installSlashFuzzy(service, { rank, order: -1 }, { attempts: 2, intervalMs: 5 })
+    await new Promise((resolve) => setTimeout(resolve, 30))
+  } finally {
+    console.warn = originalWarn
+  }
   assert.equal(typeof dispose, 'function')
+  assert.equal(slashEnhancementMode(), undefined)
+  // Silence here is what hid the first release's no-op for ten seconds.
+  assert.equal(warnings.length, 1)
+  assert.match(warnings[0], /was not found/)
+  assert.match(warnings[0], /issues\/14/)
   dispose()
 })
+

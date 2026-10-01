@@ -20,7 +20,7 @@ import fuzzysort from 'fuzzysort'
 import { pinyin } from 'pinyin-pro'
 
 import { sessionIdOf, useWorkspaceCwd } from './session-view.js'
-import { installSlashFuzzy } from './slash-source.js'
+import { installSlashFuzzy, slashEnhancementMode } from './slash-source.js'
 
 /** Required services: slot registry, host connection (official skills API), sessions (workspace cwd fallback), input triggers (/ fuzzy source). */
 export const inject = ['slots', 'connection', 'sessions', 'inputTriggers']
@@ -652,6 +652,14 @@ function SkillPickerButton(props) {
               {source === 'host' && (
                 <div style={sourceBadgeStyle} title="官方技能 API 不可用，列表来自本地目录扫描（与官方 / 补全同源）">
                   <span style={sourceBadgeTextStyle}>本地扫描</span>
+                </div>
+              )}
+              {slashEnhancementMode() === 'runtime' && (
+                <div
+                  style={sourceBadgeStyle}
+                  title="`/` 菜单的模糊+拼音搜索由本插件在运行时接管官方技能源（不依赖改写任何文件，issue #14）"
+                >
+                  <span style={sourceBadgeTextStyle}>/ 增强：运行时接管</span>
                 </div>
               )}
             </>

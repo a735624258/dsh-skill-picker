@@ -42,32 +42,63 @@ export function isSkillSourceWrapped(source) {
   return source !== null && typeof source === 'object' && source[WRAPPED] === true
 }
 
+/** Set once the runtime takeover is live; read by the ⚡ panel footer. */
+let enhancementMode
+
+/** Which mechanism upgrades the official `/` menu: 'runtime' once installed. */
+export function slashEnhancementMode() {
+  return enhancementMode
+}
+
+/** Whether an object is the official skill source. */
+function isSkillSource(source) {
+  return source !== null && typeof source === 'object'
+    && source.trigger === SKILL_SOURCE.trigger
+    && source.name === SKILL_SOURCE.name
+}
+
 /**
- * Locate the official skill source through the public `inputTriggers` service.
+ * Every place the live source registry has actually been observed, most precise
+ * first. **The service itself does NOT expose `sources()` / `all()`** — those
+ * belong to the per-session controller's `roster`, built as
+ * `{ sources: (trigger) => live.sources.filter(...), all: () => live.sources }`.
+ * The service (`ctx.inputTriggers`, an `InputTriggerService extends Service`) is
+ * exactly: `inject, live, constructor, registerSource, sessionOf, sessions` —
+ * so `live.sources` is the real registry and the one that matters. The other
+ * shapes are kept because reaching for a helper that does not exist is what
+ * made the first release of this module silently do nothing.
  *
- * `sources(trigger)` is the precise query; `all()` is the fallback for a kernel
- * that publishes the registry without the per-trigger helper. Both return the
- * live objects, so the caller can wrap `candidates` in place.
+ * @param service - the injected inputTriggers service.
+ * @returns arrays to search, in order.
+ */
+function registryCandidates(service) {
+  const lists = []
+  const push = (value) => {
+    if (Array.isArray(value) && value.length > 0) lists.push(value)
+  }
+  try { push(service.live?.sources) } catch { /* getter threw */ }
+  try { if (typeof service.sources === 'function') push(service.sources(SKILL_SOURCE.trigger)) } catch { /* ignore */ }
+  try { if (typeof service.all === 'function') push(service.all()) } catch { /* ignore */ }
+  try { push(service.sources) } catch { /* ignore */ }
+  try { if (typeof service.roster?.sources === 'function') push(service.roster.sources(SKILL_SOURCE.trigger)) } catch { /* ignore */ }
+  try { if (typeof service.roster?.all === 'function') push(service.roster.all()) } catch { /* ignore */ }
+  return lists
+}
+
+/**
+ * Locate the official skill source through the injected `inputTriggers` service.
+ * Returns the **live object**, so the caller can take it over in place.
  *
- * @param inputTriggers - the injected service, if the host provided one.
+ * @param service - the injected service, if the host provided one.
  * @returns the source object, or undefined while it is not registered yet.
  */
-export function findSkillSource(inputTriggers) {
-  if (inputTriggers === null || inputTriggers === undefined) return undefined
-  try {
-    const byTrigger = typeof inputTriggers.sources === 'function' ? inputTriggers.sources(SKILL_SOURCE.trigger) : undefined
-    const list = Array.isArray(byTrigger) && byTrigger.length > 0
-      ? byTrigger
-      : (typeof inputTriggers.all === 'function' ? inputTriggers.all() : undefined)
-    if (!Array.isArray(list)) return undefined
-    return list.find(
-      (source) => source !== null && typeof source === 'object'
-        && source.trigger === SKILL_SOURCE.trigger
-        && source.name === SKILL_SOURCE.name,
-    )
-  } catch {
-    return undefined
+export function findSkillSource(service) {
+  if (service === null || service === undefined) return undefined
+  for (const list of registryCandidates(service)) {
+    const found = list.find(isSkillSource)
+    if (found !== undefined) return found
   }
+  return undefined
 }
 
 /**
@@ -171,6 +202,8 @@ export function wrapSkillSource(source, hooks = {}) {
     return undefined
   }
 
+  enhancementMode = 'runtime'
+
   return () => {
     try {
       if (taken.includes('candidates')) source.candidates = original.candidates
@@ -183,6 +216,7 @@ export function wrapSkillSource(source, hooks = {}) {
         else delete source.onPick
       }
       delete source[WRAPPED]
+      enhancementMode = undefined
     } catch {
       /* a source that became read-only keeps the wrapper; not fatal */
     }
@@ -212,7 +246,16 @@ export function installSlashFuzzy(inputTriggers, hooks = {}, options = {}) {
     try {
       const source = findSkillSource(inputTriggers)
       if (source === undefined) {
-        if (attempts++ < maxAttempts) timer = setTimeout(attempt, intervalMs)
+        if (attempts++ < maxAttempts) {
+          timer = setTimeout(attempt, intervalMs)
+        } else {
+          // Loud on the give-up case. The first release of this module reached
+          // for a helper the service does not have and then quietly did nothing
+          // for ten seconds; nobody could tell it had never run.
+          console.warn('[dsh-skill-picker] / takeover: the official "skill" trigger source was not found'
+            + ` after ${maxAttempts} attempts — the / menu keeps the official matcher.`
+            + ' See https://github.com/a735624258/dsh-skill-picker/issues/14')
+        }
         return
       }
       // Already wrapped (a previous install, or an HMR re-apply): stop retrying
