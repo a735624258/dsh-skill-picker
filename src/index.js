@@ -18,12 +18,12 @@
  * @module dsh-skill-picker
  */
 
-import { readFile, readdir } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
 import { isDirectoryEntry } from './dir-entry.js'
-import { healUiSkillPatches, revertUiSkillPatches } from './patch-ui-skill.js'
+import { dshHome, healUiSkillPatches, revertUiSkillPatches } from './patch-ui-skill.js'
 
 /** Required services: the route registry and the prompt band. */
 export const inject = ['webServer', 'systemPrompt']
@@ -254,6 +254,117 @@ export function reportUiSkillPatches(report, io = console) {
 }
 
 /**
+ * Shared picker state: the pinned list and the usage history, stored ONCE per
+ * DSH home instead of per browser origin.
+ *
+ * Why it exists: `localStorage` is scoped to an origin, so the desktop app
+ * (`dsh-app://app`), the web UI (`http://127.0.0.1:3080`) and a phone all kept
+ * their own copy — pin a skill on the desktop and the web UI never sees it.
+ * Both halves now read and write this one file.
+ *
+ * @returns the absolute path of the shared state file.
+ */
+function sharedStateFile() {
+  return path.join(dshHome(), 'dsh-skill-picker-state.json')
+}
+
+/** Coerce anything into `{ pinned: string[], usage: {name: {count, lastUsed}} }`. */
+function normalizeSharedState(value) {
+  const source = value !== null && typeof value === 'object' ? value : {}
+  const pinned = Array.isArray(source.pinned)
+    ? [...new Set(source.pinned.filter((name) => typeof name === 'string' && name !== ''))]
+    : []
+  const usage = {}
+  const rawUsage = source.usage !== null && typeof source.usage === 'object' ? source.usage : {}
+  for (const [name, entry] of Object.entries(rawUsage)) {
+    if (typeof name !== 'string' || name === '') continue
+    const record = entry !== null && typeof entry === 'object' ? entry : {}
+    const count = Number.isFinite(record.count) ? Math.max(0, Math.trunc(record.count)) : 0
+    const lastUsed = Number.isFinite(record.lastUsed) ? Math.max(0, Math.trunc(record.lastUsed)) : 0
+    if (count === 0 && lastUsed === 0) continue
+    usage[name] = { count, lastUsed }
+  }
+  return { pinned, usage }
+}
+
+/** Read the shared state, or null when the file does not exist yet. */
+async function readSharedState() {
+  try {
+    return normalizeSharedState(JSON.parse(await readFile(sharedStateFile(), 'utf8')))
+  } catch {
+    return null
+  }
+}
+
+/** Write the shared state atomically (temp + rename), creating the home if needed. */
+async function writeSharedState(state) {
+  const normal = normalizeSharedState(state)
+  const file = sharedStateFile()
+  await mkdir(path.dirname(file), { recursive: true })
+  const tmp = `${file}.tmp`
+  await writeFile(tmp, `${JSON.stringify(normal, null, 2)}\n`, 'utf8')
+  await rename(tmp, file)
+  return normal
+}
+
+/**
+ * First-run migration: union both ends instead of letting whichever browser
+ * happened to write first win, so nobody silently loses their pins.
+ */
+function mergeSharedState(a, b) {
+  const left = normalizeSharedState(a)
+  const right = normalizeSharedState(b)
+  const pinned = [...left.pinned]
+  for (const name of right.pinned) if (!pinned.includes(name)) pinned.push(name)
+  const usage = { ...left.usage }
+  for (const [name, entry] of Object.entries(right.usage)) {
+    const previous = usage[name]
+    usage[name] = previous === undefined
+      ? entry
+      : { count: Math.max(previous.count, entry.count), lastUsed: Math.max(previous.lastUsed, entry.lastUsed) }
+  }
+  return normalizeSharedState({ pinned, usage })
+}
+
+/** Read a JSON request body with a hard cap, so a bad client cannot grow memory. */
+async function readJsonBody(req) {
+  const chunks = []
+  let size = 0
+  for await (const chunk of req) {
+    size += chunk.length
+    if (size > 1_000_000) throw new Error('shared state body too large')
+    chunks.push(chunk)
+  }
+  if (chunks.length === 0) return {}
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+}
+
+/**
+ * `GET /dsh-skill-picker/state` → `{ ok, state }` (`state: null` before the
+ * first write). `PUT` with `{ pinned, usage }` → the stored state; `?migrate=1`
+ * unions the incoming state with the stored one and returns the result.
+ */
+async function handleSharedState(req, res, url) {
+  const json = (code, payload) => {
+    res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' })
+    res.end(JSON.stringify(payload))
+  }
+  try {
+    if (req.method === 'PUT' || req.method === 'POST') {
+      const incoming = normalizeSharedState(await readJsonBody(req))
+      const migrate = url.searchParams.get('migrate') === '1'
+      const stored = migrate ? await readSharedState() : null
+      const next = stored === null ? await writeSharedState(incoming) : await writeSharedState(mergeSharedState(stored, incoming))
+      json(200, { ok: true, state: next })
+      return
+    }
+    json(200, { ok: true, state: await readSharedState() })
+  } catch (error) {
+    json(500, { ok: false, error: String(error?.message ?? error) })
+  }
+}
+
+/**
  * Mount the skills route and the prompt section.
  * @param ctx - context carrying webServer and systemPrompt.
  */
@@ -261,8 +372,13 @@ export function apply(ctx) {
   ctx.effect(() => {
     const handler = async (req, res) => {
       try {
+        const url = new URL(req.url ?? '/', 'http://dsh')
+        if (url.pathname === '/dsh-skill-picker/state') {
+          await handleSharedState(req, res, url)
+          return
+        }
         // cwd query carries the active session's workspace root from the client.
-        const cwd = req.url !== undefined ? new URL(req.url, 'http://dsh').searchParams.get('cwd') ?? undefined : undefined
+        const cwd = url.searchParams.get('cwd') ?? undefined
         const skills = await scanSkills(cwd)
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify({ ok: true, complete: true, skills }))

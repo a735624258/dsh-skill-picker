@@ -20,6 +20,7 @@ import fuzzysort from 'fuzzysort'
 import { pinyin } from 'pinyin-pro'
 
 import { sessionIdOf, useWorkspaceCwd } from './session-view.js'
+import { SHARED_STATE_EVENT, pushSharedState, syncSharedState } from './shared-state.js'
 import { installSlashFuzzy, slashEnhancementMode, warmSlashSkill } from './slash-source.js'
 
 /** Required services: slot registry, host connection (official skills API), sessions (workspace cwd fallback), input triggers (/ fuzzy source). */
@@ -43,13 +44,14 @@ function loadPinned() {
   }
 }
 
-/** Persist the pinned list; never throws. */
+/** Persist the pinned list; never throws. Also pushes the shared copy. */
 function savePinned(pinned) {
   try {
     localStorage.setItem(PINNED_KEY, JSON.stringify(pinned))
   } catch {
     /* storage unavailable — pinning just won't persist */
   }
+  void pushSharedState()
 }
 
 /** Read the usage history {name: {count, lastUsed}}; never throws. */
@@ -64,13 +66,14 @@ function loadUsage() {
   }
 }
 
-/** Persist the usage history; never throws. */
+/** Persist the usage history; never throws. Also pushes the shared copy. */
 function saveUsage(usage) {
   try {
     localStorage.setItem(USAGE_KEY, JSON.stringify(usage))
   } catch {
     /* storage unavailable — ordering just won't persist */
   }
+  void pushSharedState()
 }
 
 /**
@@ -380,6 +383,20 @@ function SkillPickerButton(props) {
     return () => window.removeEventListener('dsh-skill-picker:usage-updated', onUsageUpdated)
   }, [])
 
+  // Pinned list and usage history live in one shared file on the host, so the
+  // desktop app, the web UI and a phone all show the same ordering. The mirror
+  // in localStorage is what the synchronous ranking reads; pull once on mount
+  // and again whenever a slash pick or another client changes the shared copy.
+  useEffect(() => {
+    const onSharedState = () => {
+      setUsage(loadUsage())
+      setPinned(loadPinned())
+    }
+    window.addEventListener(SHARED_STATE_EVENT, onSharedState)
+    void syncSharedState()
+    return () => window.removeEventListener(SHARED_STATE_EVENT, onSharedState)
+  }, [])
+
   // Prime the official `/` catalogue for this Session as soon as it is known.
   //
   // The slash menu highlights the FIRST group that settles and scrolls it into
@@ -444,6 +461,10 @@ function SkillPickerButton(props) {
 
   const toggle = () => {
     if (!open) {
+      // Pull first: a pin or a pick made on another client (desktop ↔ web ↔
+      // phone) should be visible the moment this panel opens. The pull fires
+      // SHARED_STATE_EVENT, which is what refreshes `usage`/`pinned` here.
+      void syncSharedState()
       setUsage(loadUsage())
       void load()
     }
@@ -687,6 +708,12 @@ function SkillPickerButton(props) {
 
 /** Apply the browser half: register the picker into the composer tool row. */
 export function apply(ctx) {
+  // Pull the shared pinned/usage state as early as possible: the `/` menu ranks
+  // during render from the localStorage mirror, so the mirror has to be filled
+  // before the user can type a slash. Best-effort — on failure the picker keeps
+  // working from whatever this browser already had.
+  void syncSharedState()
+
   // Primary skill source: the official host skills API. In DSH 0.1.2-alpha.x
   // the RPC moved from `connection.api.skills` (rc.x) to `remote.skills`
   // (used by the official ui-skill plugin); try both before falling back.
