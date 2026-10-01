@@ -155,14 +155,13 @@ function primeNow(sessionId) {
   if (source === null || source === undefined) return false
   if (itemCache.has(sessionId)) return true
   try {
-    if (typeof source.warm === 'function') {
-      source.warm({ sessionId })
-      return true
-    }
-    if (typeof source.candidates === 'function') {
-      const signal = typeof AbortController === 'function' ? new AbortController().signal : undefined
-      Promise.resolve(source.candidates({ sessionId }, { query: '', signal })).catch(() => {})
-    }
+    // Go through the WRAPPER's own path, never the official `warm()` alone:
+    // `warm()` primes only the official module's cache, leaving OUR cache empty,
+    // so the menu's own call still misses and still awaits — which is exactly
+    // how v0.5.16/v0.5.17 kept losing the settle race. The wrapper stores a
+    // snapshot on a miss, so this single call fills both layers.
+    const signal = typeof AbortController === 'function' ? new AbortController().signal : undefined
+    Promise.resolve(source.candidates({ sessionId }, { query: '', signal })).catch(() => {})
   } catch {
     /* priming is best-effort */
   }
@@ -373,7 +372,9 @@ export function wrapSkillSource(source, hooks = {}) {
       delete source[WRAPPED]
       enhancementMode = undefined
       if (takenOverSource === source) takenOverSource = undefined
-      itemCache.clear()
+      // The cache deliberately SURVIVES a re-install: after a hot reload the
+      // first menu open should still be served instantly instead of losing the
+      // settle race once more.
       // A disposed takeover must not keep a priming request for a Session that
       // may be gone by the time it is installed again.
       pendingSessionId = undefined
