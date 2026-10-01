@@ -23,7 +23,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { isDirectoryEntry } from './dir-entry.js'
-import { healUiSkillPatches } from './patch-ui-skill.js'
+import { healUiSkillPatches, revertUiSkillPatches } from './patch-ui-skill.js'
 
 /** Required services: the route registry and the prompt band. */
 export const inject = ['webServer', 'systemPrompt']
@@ -280,17 +280,32 @@ export function apply(ctx) {
     text: SKILL_PICKER_GUIDANCE,
   }), 'dsh-skill-picker: prompt section')
 
-  // Self-healing patch for the official ui-skill package: keeps the `/`
-  // completion's skill group ordered above commands and its matching fuzzy
-  // across DSH upgrades. Runs once per boot; idempotent, backed up, and
-  // never allowed to take the host down.
+  // The `/` enhancement no longer edits official files.
   //
-  // Logging is gated on "did this boot change anything / fail" rather than
-  // "was a target found" — see `reportUiSkillPatches` (issue #8).
+  // Since v0.5.15 it takes over the LIVE trigger source at runtime, which does
+  // everything the old file patch did (skill group first, fuzzy+pinyin matching,
+  // usage tracking) without touching a single file. The patch is therefore
+  // redundant — and a modified copy of an official package is confusing in its
+  // own right: it made the desktop and web profiles disagree about one shared
+  // file, and it is what made "is this the original?" impossible to answer.
+  //
+  // So the default is now to RESTORE our own patch (from the `.bak` it made).
+  // Set DSH_SKILL_PICKER_FILE_PATCH=1 to fall back to the old behaviour on a
+  // kernel whose trigger registry has no live sources to take over.
   ctx.effect(() => {
-    healUiSkillPatches().then((report) => {
-      reportUiSkillPatches(report)
-    }).catch((error) => {
+    const enabled = process.env.DSH_SKILL_PICKER_FILE_PATCH === '1'
+    const task = enabled
+      ? healUiSkillPatches().then((report) => reportUiSkillPatches(report))
+      : revertUiSkillPatches().then((report) => {
+        if (report.restored.length > 0) {
+          console.log('[dsh-skill-picker] ui-skill patch retired; restored original file(s):',
+            report.restored.join(', '))
+        }
+        if (report.errors.length > 0) {
+          console.warn('[dsh-skill-picker] ui-skill restore errors:', JSON.stringify(report.errors))
+        }
+      })
+    task.catch((error) => {
       console.warn('[dsh-skill-picker] ui-skill patch failed:', error)
     })
     return () => {}

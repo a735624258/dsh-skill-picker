@@ -326,6 +326,53 @@ export async function patchUiSkillFile(file) {
  * into `errors` so the host boot is never taken down by a broken patch.
  * @returns {Promise<{files: Array, errors: string[]}>}
  */
+/**
+ * Undo our own file patch: restore every `<file>.dsh-skill-picker.bak` we made.
+ *
+ * The `/` enhancement has not needed this patch since v0.5.15, which takes over
+ * the LIVE trigger source at runtime instead. Keeping the patch meant shipping a
+ * modified copy of an official package — confusing on its own, and it made the
+ * desktop and web profiles disagree about the same file.
+ *
+ * Restores only a file that still carries OUR marker, so a file edited by
+ * something else since is left alone. Idempotent: after one pass there is
+ * nothing left to restore.
+ *
+ * @returns {Promise<{restored: string[], errors: string[]}>}
+ */
+export async function revertUiSkillPatches() {
+  const files = await uiSkillClientPaths()
+  const restored = []
+  const errors = []
+  for (const file of files) {
+    const backup = `${file}.dsh-skill-picker.bak`
+    try {
+      let text
+      try {
+        text = await readFile(file, 'utf8')
+      } catch {
+        continue
+      }
+      if (!PATCHES.some((patch) => patch.isApplied(text))) continue
+      let original
+      try {
+        original = await readFile(backup, 'utf8')
+      } catch {
+        continue
+      }
+      // Same temp+rename dance as the patch itself: never write a hardlinked
+      // package file in place (that would mutate the shared pnpm store).
+      const tmp = `${file}.dsh-skill-picker.tmp`
+      await writeFile(tmp, original, 'utf8')
+      await rename(tmp, file)
+      restored.push(file)
+    } catch (error) {
+      errors.push(`${file}: ${String(error?.message ?? error)}`)
+    }
+  }
+  return { restored, errors }
+}
+
 export async function healUiSkillPatches() {
   const files = await uiSkillClientPaths()
   const filesReport = []
