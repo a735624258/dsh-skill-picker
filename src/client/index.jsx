@@ -642,6 +642,25 @@ export function apply(ctx) {
     return raw.filter(isUserFacingSkill).map((skill) => ({ name: skill.name, description: skill.description ?? '' }))
   }
 
+  // Legacy workspace-cwd source: the Session list snapshot still carried a
+  // `current` cursor up to the 0.1.5 client line, and on those kernels the slot
+  // props may not hand us a `useSessions` seat at all. Keeping this as a
+  // fallback means issue #11's fix does not silently regress the older kernels
+  // the compatibility table still declares.
+  let legacyCwd = ''
+  const syncLegacyCwd = () => {
+    try {
+      const snapshot = ctx.sessions.list.getSnapshot()
+      const sessionId = snapshot.current
+      const cwd = sessionId === undefined ? undefined : snapshot.byId[sessionId]?.cwd
+      legacyCwd = typeof cwd === 'string' ? cwd : ''
+    } catch {
+      legacyCwd = ''
+    }
+  }
+  syncLegacyCwd()
+  const unsubscribeLegacyCwd = ctx.sessions.list.subscribe(syncLegacyCwd)
+
   ctx.effect(() => {
     // Wrap the component so framework props pass through untouched and the
     // live workspace cwd + official skills fetcher are attached — never
@@ -651,9 +670,16 @@ export function apply(ctx) {
     // ./session-view.js): the Session list snapshot has no "current" cursor
     // since the 0.1.7 client, so resolving the active Session through
     // `ctx.sessions.list` yielded `''` and the host fallback scan never
-    // received the workspace.
-    const PickerWithCwd = (props) =>
-      React.createElement(SkillPickerButton, { ...props, cwd: useWorkspaceCwd(props), listSkills })
+    // received the workspace. The legacy source above is consulted only when
+    // the standard props resolve to nothing, so both kernel lines work.
+    const PickerWithCwd = (props) => {
+      const cwd = useWorkspaceCwd(props)
+      return React.createElement(SkillPickerButton, {
+        ...props,
+        cwd: cwd === '' ? legacyCwd : cwd,
+        listSkills,
+      })
+    }
     const dispose = ctx.slots.inject('conversation.input.right', () =>
       ctx.slots.register(
         { name: 'conversation.input.right', id: 'skill-picker', order: 100, label: 'Skill picker' },
@@ -662,6 +688,7 @@ export function apply(ctx) {
     )
     return () => {
       dispose()
+      unsubscribeLegacyCwd()
     }
   }, 'dsh-skill-picker: composer input slot')
 

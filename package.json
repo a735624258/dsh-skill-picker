@@ -1,7 +1,7 @@
 {
   "name": "dsh-skill-picker",
   "description": "DSH Web GUI skill picker: a button beside the composer opens a searchable list of installed skills; picking one inserts the official `/skill-name` gesture into the input box, so the skill loads with your message (WorkBuddy-style skill invocation for DeepSeek Harness).",
-  "version": "0.5.12",
+  "version": "0.5.13",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -39,7 +39,10 @@
         "0.1.2-rc.1": "compatible",
         "0.1.5-rc.1": "compatible",
         "0.1.5-rc.2": "compatible",
-        "0.1.7-rc.2": "unknown"
+        "0.1.7-rc.1": "unknown",
+        "0.1.7-rc.2": "unknown",
+        "0.2.0-rc.1": "compatible",
+        "0.2.0-rc.2": "compatible"
       }
     }
   },
@@ -48,12 +51,12 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-client-locale": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-host-webserver": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-skill": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-system-prompt": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-locale": "^0.1.0-rc.6 || >=0.2.0-rc.1 <1.0.0-0",
+    "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6 || >=0.2.0-rc.1 <1.0.0-0",
+    "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.6 || >=0.2.0-rc.1 <1.0.0-0",
+    "@deepseek-ai/dsh-host-webserver": "^0.1.0-rc.6 || >=0.2.0-rc.1 <1.0.0-0",
+    "@deepseek-ai/dsh-skill": "^0.1.0-rc.6 || >=0.2.0-rc.1 <1.0.0-0",
+    "@deepseek-ai/dsh-system-prompt": "^0.1.0-rc.6 || >=0.2.0-rc.1 <1.0.0-0",
     "react": "^18.2.0"
   },
   "files": [

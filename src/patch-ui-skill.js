@@ -107,10 +107,98 @@ export function dshHome() {
   return process.env.DSH_HOME ?? path.join(os.homedir(), '.dsh')
 }
 
+/** Subpath of the official skill UI inside any installation tree. */
+const UI_SKILL_SUBPATH = ['node_modules', '@deepseek-ai', 'dsh-client-ui-skill', 'lib', 'client.js']
+
+/** Whether a path exists (any type). Never throws. */
+async function pathExists(candidate) {
+  try {
+    await access(candidate)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Where the *running desktop build* keeps its own copy of the official skill UI.
+ *
+ * A packaged DSH Desktop ships that UI in one of two shapes (issue #9):
+ *
+ *   - `resources/app/node_modules/…` — an **unpacked** build. The app is the
+ *     installation-scoped owner, so this file is what gets served, and it is an
+ *     ordinary writable file.
+ *   - `resources/app.asar/dsh/node_modules/…` — a **packed** build. Electron's
+ *     `fs` shim can *read* through the archive but cannot write into it, so this
+ *     path is evidence for diagnosis only and is never a patch target.
+ *
+ * `process.resourcesPath` only exists inside Electron; a plain `dsh` CLI or web
+ * run returns empty lists and nothing changes for it.
+ * @returns {{writable: string[], packed: string[]}} candidate paths.
+ */
+export function desktopUiSkillPaths() {
+  const resources = process.resourcesPath
+  if (typeof resources !== 'string' || resources === '') return { writable: [], packed: [] }
+  return {
+    writable: [path.join(resources, 'app', ...UI_SKILL_SUBPATH)],
+    packed: [path.join(resources, 'app.asar', 'dsh', ...UI_SKILL_SUBPATH)],
+  }
+}
+
+/**
+ * Whether a profile manifest redirects the official skill UI to its own copy.
+ *
+ * This is the switch that decides which copy a desktop build serves: without a
+ * declared dependency the profile resolves the package from the installation
+ * (`resources/app` or `app.asar`), and every profile-local copy is dead weight.
+ * @param profileDir - absolute profile directory.
+ * @returns true when the manifest declares `@deepseek-ai/dsh-client-ui-skill`.
+ */
+async function profileRedirectsUiSkill(profileDir) {
+  try {
+    const manifest = JSON.parse(await readFile(path.join(profileDir, 'package.json'), 'utf8'))
+    const declared = { ...manifest?.dependencies, ...manifest?.devDependencies }
+    return typeof declared['@deepseek-ai/dsh-client-ui-skill'] === 'string'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Explain why the patch targets found (or not found) may not be what the host
+ * actually serves, for a packed desktop build (issue #9).
+ *
+ * Silence here was the worst part of #9: patching a stale profile copy looks
+ * exactly like success, so the `/` menu kept its official matcher with no
+ * signal at all.
+ * @returns a sentence to append to a warning, or '' when there is nothing to say.
+ */
+async function packedDesktopNote() {
+  const { packed } = desktopUiSkillPaths()
+  if (packed.length === 0 || !(await pathExists(packed[0]))) return ''
+  const profilesDir = path.join(dshHome(), 'profiles')
+  let redirected = false
+  try {
+    for (const entry of await readdir(profilesDir, { withFileTypes: true })) {
+      if (entry.name === 'node_modules') continue
+      if (await profileRedirectsUiSkill(path.join(profilesDir, entry.name))) {
+        redirected = true
+        break
+      }
+    }
+  } catch {
+    /* unreadable profile list: report the pessimistic case */
+  }
+  if (redirected) return ''
+  return ' This desktop build keeps the official skill UI inside `app.asar`, which cannot be written in place,'
+    + ' and no profile redirects the package to a local copy — so the served `/` menu keeps the official matcher.'
+    + ' Install a profile-local override (`"@deepseek-ai/dsh-client-ui-skill": "link:…"`) or run DSH from the CLI.'
+}
+
 /**
  * Enumerate every installed ui-skill `lib/client.js` across all profiles.
  *
- * Three layouts are covered (deduplicated by real path):
+ * Four layouts are covered (deduplicated by real path):
  *   1. the **shared core root** `profiles/node_modules/@deepseek-ai/…` — used by
  *      a global `npm i -g @deepseek-ai/dsh`, where the official package is NOT
  *      below any single profile (issue #7 — missing this made the whole patch
@@ -118,7 +206,11 @@ export function dshHome() {
  *   2. the user's local patched copy (`profiles/<p>/local/dsh-client-ui-skill`)
  *      — that is what a linked profile actually loads;
  *   3. the plain npm install inside a profile
- *      (`profiles/<p>/node_modules/@deepseek-ai/…`).
+ *      (`profiles/<p>/node_modules/@deepseek-ai/…`);
+ *   4. the **running desktop build's own unpacked tree**
+ *      (`resources/app/node_modules/@deepseek-ai/…`) — issue #9: a desktop
+ *      install owns the package at installation scope, so its copy is the one
+ *      served whenever no profile redirects the name.
  *
  * As a defensive extra, each profile is also asked through Node's own resolver
  * (`createRequire().resolve()`), so a layout we did not enumerate still works.
@@ -131,7 +223,9 @@ export async function uiSkillClientPaths() {
   try {
     profiles = await readdir(profilesDir, { withFileTypes: true })
   } catch {
-    return []
+    // A desktop build can still be patchable through its own resource tree
+    // even when $DSH_HOME/profiles is absent or unreadable.
+    profiles = []
   }
   const seen = new Set()
   const found = []
@@ -161,6 +255,10 @@ export async function uiSkillClientPaths() {
 
   // 1. shared core root (global installs) — see the doc comment above.
   await collect(path.join(profilesDir, 'node_modules', '@deepseek-ai', 'dsh-client-ui-skill', 'lib', 'client.js'))
+
+  // 4. the running desktop build's own unpacked tree (issue #9): this is the
+  //    copy a packaged Electron app serves when no profile redirects the name.
+  for (const candidate of desktopUiSkillPaths().writable) await collect(candidate)
 
   for (const entry of profiles) {
     // `node_modules` is a sibling of the profiles, not a profile itself.
@@ -242,10 +340,17 @@ export async function healUiSkillPatches() {
   // Loud on the empty case. Silence here was the most confusing part of
   // issue #7: "found 0 targets" and "everything already applied" used to print
   // identically, so nobody could tell the patch had never run at all.
+  const note = await packedDesktopNote()
   if (files.length === 0) {
     console.warn('[dsh-skill-picker] ui-skill patch: 0 target client.js found under '
-      + `${path.join(dshHome(), 'profiles')} — fuzzy+pinyin matching will NOT be applied. `
-      + 'See https://github.com/a735624258/dsh-skill-picker/issues/7')
+      + `${path.join(dshHome(), 'profiles')} — fuzzy+pinyin matching will NOT be applied.`
+      + `${note} See https://github.com/a735624258/dsh-skill-picker/issues/9`)
+  } else if (note !== '') {
+    // Targets existed, so the old code stayed silent — but none of them is the
+    // copy the host serves. That is issue #9's silent failure: a "successful"
+    // patch run that changes nothing the user can see.
+    console.warn(`[dsh-skill-picker] ui-skill patch: patched ${files.length} profile copy/copies,`
+      + ` but none of them is the one this host serves.${note}`)
   }
   return { files: filesReport, errors }
 }
