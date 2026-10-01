@@ -24,6 +24,7 @@ import {
   installSlashFuzzy,
   isSkillSourceWrapped,
   slashEnhancementMode,
+  warmSlashSkill,
   wrapSkillSource,
 } from '../src/client/slash-source.js'
 
@@ -298,5 +299,41 @@ test('installSlashFuzzy gives up loudly when the source never appears', async ()
   assert.match(warnings[0], /was not found/)
   assert.match(warnings[0], /issues\/14/)
   dispose()
+})
+
+test('warmSlashSkill primes the catalogue through the official warm()', () => {
+  const { source } = makeSource()
+  const warmed = []
+  source.warm = (session) => warmed.push(session)
+  const restore = wrapSkillSource(source, { rank })
+  warmSlashSkill('s1')
+  assert.deepEqual(warmed, [{ sessionId: 's1' }])
+  restore()
+  // The takeover is gone, so there is nothing left to prime.
+  warmSlashSkill('s2')
+  assert.equal(warmed.length, 1)
+})
+
+test('warmSlashSkill falls back to a candidates call when warm() is absent', async () => {
+  const { source, calls } = makeSource()
+  const restore = wrapSkillSource(source, { rank })
+  warmSlashSkill('s1')
+  await new Promise((resolve) => setTimeout(resolve, 5))
+  // The wrapper's empty-query path is exactly what populates the official cache.
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].args.query, '')
+  assert.deepEqual(calls[0].projection, { sessionId: 's1' })
+  restore()
+})
+
+test('warmSlashSkill ignores an empty session and swallows failures', () => {
+  const { source } = makeSource()
+  source.warm = () => { throw new Error('boom') }
+  const restore = wrapSkillSource(source, { rank })
+  assert.doesNotThrow(() => warmSlashSkill(''))
+  assert.doesNotThrow(() => warmSlashSkill(undefined))
+  assert.doesNotThrow(() => warmSlashSkill('s1'))
+  restore()
+  assert.doesNotThrow(() => warmSlashSkill('s1'))
 })
 

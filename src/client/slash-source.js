@@ -45,9 +45,50 @@ export function isSkillSourceWrapped(source) {
 /** Set once the runtime takeover is live; read by the ⚡ panel footer. */
 let enhancementMode
 
+/** The source the takeover wrapped, so the catalogue can be primed ahead of time. */
+let takenOverSource
+
 /** Which mechanism upgrades the official `/` menu: 'runtime' once installed. */
 export function slashEnhancementMode() {
   return enhancementMode
+}
+
+/**
+ * Prime the official skill catalogue for a Session.
+ *
+ * The slash menu highlights **the first group that settles** and then scrolls it
+ * into view (`scrollIntoView({ block: "nearest" })`), and the highlight sticks
+ * once set. The picker keeps the skill group first (`order: -1`), so if the
+ * command group settles first the menu opens scrolled down to it — the "menu
+ * opens at the bottom" report.
+ *
+ * Nothing warms the skill catalogue on a normal boot: `input-trigger` calls
+ * `source.warm?.()` only from `sourceAdded`, which fires just for a source
+ * registered *after* a session controller already exists. The official
+ * `fetchCatalog()` promise therefore starts cold on the first `/` of a session,
+ * loses the race to the command source's list RPC, and only the second open is
+ * fast. Priming it as soon as the Session is known removes that first-open loss.
+ *
+ * Best-effort by design: a failed warm changes nothing.
+ *
+ * @param sessionId - the active Session's id.
+ */
+export function warmSlashSkill(sessionId) {
+  if (typeof sessionId !== 'string' || sessionId === '') return
+  const source = takenOverSource
+  if (source === null || source === undefined) return
+  try {
+    if (typeof source.warm === 'function') {
+      source.warm({ sessionId })
+      return
+    }
+    if (typeof source.candidates === 'function') {
+      const signal = typeof AbortController === 'function' ? new AbortController().signal : undefined
+      Promise.resolve(source.candidates({ sessionId }, { query: '', signal })).catch(() => {})
+    }
+  } catch {
+    /* priming is best-effort */
+  }
 }
 
 /** Whether an object is the official skill source. */
@@ -203,6 +244,7 @@ export function wrapSkillSource(source, hooks = {}) {
   }
 
   enhancementMode = 'runtime'
+  takenOverSource = source
 
   return () => {
     try {
@@ -217,6 +259,7 @@ export function wrapSkillSource(source, hooks = {}) {
       }
       delete source[WRAPPED]
       enhancementMode = undefined
+      if (takenOverSource === source) takenOverSource = undefined
     } catch {
       /* a source that became read-only keeps the wrapper; not fatal */
     }

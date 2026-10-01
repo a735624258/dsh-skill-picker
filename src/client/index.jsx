@@ -20,7 +20,7 @@ import fuzzysort from 'fuzzysort'
 import { pinyin } from 'pinyin-pro'
 
 import { sessionIdOf, useWorkspaceCwd } from './session-view.js'
-import { installSlashFuzzy, slashEnhancementMode } from './slash-source.js'
+import { installSlashFuzzy, slashEnhancementMode, warmSlashSkill } from './slash-source.js'
 
 /** Required services: slot registry, host connection (official skills API), sessions (workspace cwd fallback), input triggers (/ fuzzy source). */
 export const inject = ['slots', 'connection', 'sessions', 'inputTriggers']
@@ -379,6 +379,21 @@ function SkillPickerButton(props) {
     window.addEventListener('dsh-skill-picker:usage-updated', onUsageUpdated)
     return () => window.removeEventListener('dsh-skill-picker:usage-updated', onUsageUpdated)
   }, [])
+
+  // Prime the official `/` catalogue for this Session as soon as it is known.
+  //
+  // The slash menu highlights the FIRST group that settles and scrolls it into
+  // view; the highlight then sticks. The picker keeps the skill group first
+  // (`order: -1`), so if the command group wins that race the menu opens
+  // scrolled down to 添加/指令 instead of sitting on the first skill. Nothing
+  // warms the catalogue on a normal boot (`input-trigger` only calls
+  // `source.warm?.()` from `sourceAdded`, i.e. for a source registered after a
+  // session controller already exists), so the first `/` of every session is
+  // cold. Warming here costs one background request and removes that first loss.
+  const activeSessionId = sessionIdOf(props)
+  useEffect(() => {
+    if (activeSessionId !== undefined) warmSlashSkill(activeSessionId)
+  }, [activeSessionId])
 
   // Latest draft mirror: `useInput` is a selector hook and may only be called
   // during render, while the pick handler runs from a click callback. Sync the
