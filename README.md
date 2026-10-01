@@ -26,7 +26,7 @@ DSH Web GUI 的技能选择器：在输入框（composer）工具行右侧加一
 
 English: A skill picker for the DSH Web GUI — a button in the composer's right tool row opens a searchable list of installed skills; picking one inserts the official `/skill-name` gesture into the draft, so DSH's native user-invocation path loads the skill with your message.
 
-当前版本：**v0.5.12**（**修复 `user-invocable: false` 的技能未被隐藏**（issue #10）+ 修复全局安装下 `/` 补全增强静默失效（issue #7）+ ⚡ 面板**置顶分组** + `/` 补全**自动增强补丁** + 拼音搜索 + **搜索结果按匹配相关度排序**）
+当前版本：**v0.5.22**（**「置顶 / 最近使用」在桌面端、网页端和手机之间共用同一份**（存于 `$DSH_HOME/dsh-skill-picker-state.json`，不再各存各的 localStorage）+ **`/` 菜单与 ⚡ 面板排序完全一致**（空查询也走同一套排序，置顶排最前）+ **修掉「打 `/` 菜单开到下面去」**（microtask 竞态：技能组必须 0 个 `await` 才抢得到高亮）+ **文件补丁退休**（`/` 增强改为运行时接管，默认不再改任何官方文件，并会自动把改过的还原）+ 模糊/拼音匹配 + ⚡ 面板置顶分组 + 搜索结果按匹配相关度排序）
 
 ## 为什么用它（vs 官方 `/` 补全）
 
