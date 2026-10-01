@@ -77,6 +77,37 @@ function saveUsage(usage) {
 }
 
 /**
+ * Manage one skill through the host: disable / enable / reveal / uninstall /
+ * restore.
+ *
+ * The request carries `x-dsh-skill-picker: 1` on purpose. Plugin routes are
+ * reachable without authentication (`/` needs a token, these do not), and these
+ * actions rename and move files — so they require a header that a cross-site
+ * form POST cannot set. See `handleSkillOp` in the host half.
+ *
+ * @param action - disable | enable | reveal | uninstall | restore | backups
+ * @param payload - { name } for skill actions, { id } for restore.
+ * @returns `{ ok, error?, ... }` — never throws.
+ */
+async function skillOp(action, payload = {}) {
+  try {
+    const cwd = typeof payload.cwd === 'string' && payload.cwd !== '' ? `?cwd=${encodeURIComponent(payload.cwd)}` : ''
+    const response = await fetch(`/dsh-skill-picker/skill${cwd}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-dsh-skill-picker': '1' },
+      body: JSON.stringify({ action, ...payload }),
+    })
+    const body = await response.json().catch(() => undefined)
+    if (body === undefined || body.ok !== true) {
+      return { ok: false, error: body?.error ?? `host returned ${response.status}` }
+    }
+    return body
+  } catch (cause) {
+    return { ok: false, error: String(cause?.message ?? cause) }
+  }
+}
+
+/**
  * Whether a skill entry may be offered by a human-facing surface (this panel
  * and the `/` completion it feeds). The official `skills/list` DTO
  * (`SkillEntry`) carries only `modelInvocable` — the host has already filtered
@@ -315,6 +346,69 @@ const statusStyle = {
   fontSize: '13px',
 }
 
+/** One row action (关闭 / 定位 / 卸载); matches the pin button's weight. */
+const actionSpanStyle = {
+  flex: 'none',
+  marginLeft: '6px',
+  padding: '2px 4px',
+  borderRadius: '6px',
+  fontSize: '12px',
+  lineHeight: '16px',
+  cursor: 'pointer',
+  color: 'var(--dsw-alias-label-tertiary, #8a94a6)',
+  opacity: 0.55,
+  userSelect: 'none',
+}
+
+/** Result line under the list, with an optional undo for uninstall. */
+const noticeStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '8px',
+  margin: '0 8px 8px',
+  padding: '6px 10px',
+  borderRadius: '8px',
+  fontSize: '12px',
+  lineHeight: '18px',
+  background: 'var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,0.12))',
+  color: 'var(--dsw-alias-label-secondary, #b6bfcc)',
+}
+
+/** The right-click / long-press actions menu, positioned against the viewport. */
+const menuStyle = {
+  position: 'fixed',
+  zIndex: 2147483000,
+  minWidth: '196px',
+  padding: '4px',
+  borderRadius: '10px',
+  border: '1px solid var(--dsw-alias-border-secondary, rgba(128,128,128,0.24))',
+  background: 'var(--dsw-alias-bg-elevated, #23262e)',
+  boxShadow: '0 8px 28px rgba(0,0,0,0.36)',
+  color: 'var(--dsw-alias-label-primary, #e6e9ef)',
+  fontSize: '13px',
+  userSelect: 'none',
+}
+
+/** The skill name at the top of the menu (the thing being acted on). */
+const menuHeaderStyle = {
+  padding: '6px 10px 4px',
+  fontSize: '11px',
+  color: 'var(--dsw-alias-label-tertiary, #8a94a6)',
+  borderBottom: '1px solid var(--dsw-alias-border-secondary, rgba(128,128,128,0.18))',
+  marginBottom: '4px',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+/** One menu row. */
+const menuItemStyle = {
+  padding: '6px 10px',
+  borderRadius: '6px',
+  cursor: 'pointer',
+  whiteSpace: 'nowrap',
+}
+
 /** Lightweight source badge shown only when the list came from the host scan fallback (official API unavailable). */
 const sourceBadgeStyle = {
   display: 'inline-flex',
@@ -366,12 +460,32 @@ function SkillPickerButton(props) {
   const [skills, setSkills] = useState(undefined)
   const [error, setError] = useState(undefined)
   const [source, setSource] = useState(undefined)
+  // Skills whose entry file is renamed to `SKILL.md.disabled`. The official
+  // `skills/list` RPC cannot report them (the provider does not see them at
+  // all), so they come from the host scan — without this a disabled skill would
+  // simply disappear and there would be no way to switch it back on.
+  const [disabledSkills, setDisabledSkills] = useState([])
+  /** Name of the skill an action is currently running on. */
+  const [busySkill, setBusySkill] = useState('')
+  /** Result line under the list: { kind, text, undo? }. */
+  const [notice, setNotice] = useState(undefined)
+  /**
+   * The right-click menu: { x, y, skill, disabled }.
+   *
+   * Actions live here instead of on the row so the list stays a list — one
+   * glyph per row (the pin, which doubles as the pinned/not state) and
+   * everything else behind the familiar right-click. Long-press opens the same
+   * menu, because a phone has no right button.
+   */
+  const [menu, setMenu] = useState(undefined)
   const [query, setQuery] = useState('')
   const [usage, setUsage] = useState(() => loadUsage())
   const [pinned, setPinned] = useState(() => loadPinned())
   const [active, setActive] = useState(0)
   const boxRef = useRef(null)
   const itemRefs = useRef([])
+  /** Pending long-press timer for the touch path (see the menu below). */
+  const longPressRef = useRef(0)
 
   // The usage store is shared with the official `/` menu: picks made there go
   // through window.__dshSkillPickerTrack (localStorage only). Refresh this
@@ -429,8 +543,8 @@ function SkillPickerButton(props) {
     draftRef.current = props.input.draft
   }
 
-  const load = useCallback(async () => {
-    if (skills !== undefined || error !== undefined) return
+  const load = useCallback(async (force = false) => {
+    if (!force && (skills !== undefined || error !== undefined)) return
     // Session identity comes from the slot's standard props; older kernels
     // carried it as `props.session` (see ./session-view.js).
     const sessionId = sessionIdOf(props)
@@ -459,6 +573,103 @@ function SkillPickerButton(props) {
     }
   }, [skills, error, props.listSkills, props.sessionId, props.session, props.cwd])
 
+  /**
+   * Load the disabled skills from the host's own scan.
+   *
+   * They are invisible to the official `skills/list` RPC, so this is the only
+   * way the panel can offer to switch one back on. Best-effort: without it the
+   * panel still works, it just cannot re-enable.
+   */
+  const loadDisabled = useCallback(async () => {
+    try {
+      const cwd = typeof props.cwd === 'string' && props.cwd !== '' ? `?cwd=${encodeURIComponent(props.cwd)}` : ''
+      const res = await fetch(`/dsh-skill-picker/skills${cwd}`, { headers: { accept: 'application/json' } })
+      const json = await res.json()
+      if (!json.ok) return
+      setDisabledSkills((Array.isArray(json.skills) ? json.skills : []).filter((skill) => skill.disabled === true))
+    } catch {
+      /* the disabled list is a convenience; the panel works without it */
+    }
+  }, [props.cwd])
+
+  /**
+   * Run one management action and report it under the list.
+   *
+   * Reloads both lists afterwards: a disabled skill moves out of 「全部」 into
+   * 「已关闭」, and an uninstall takes it out of both.
+   */
+  const runSkillOp = async (action, skill, extra = {}) => {
+    const name = typeof skill?.name === 'string' ? skill.name : String(skill ?? '')
+    setBusySkill(name)
+    setNotice(undefined)
+    const result = await skillOp(action, { name, cwd: props.cwd, ...extra })
+    setBusySkill('')
+    if (result.ok !== true) {
+      setNotice({ kind: 'err', text: result.error ?? '操作失败' })
+      return
+    }
+    if (action === 'uninstall') {
+      const id = String(result.backupPath ?? '').split(/[\\/]/).filter(Boolean).pop()
+      setNotice({ kind: 'ok', text: `已卸载 /${name} —— 只是移进备份目录，没删`, undo: id })
+    } else if (action === 'disable') {
+      setNotice({ kind: 'ok', text: `已关闭 /${name} —— agent 也不会再加载它了` })
+    } else if (action === 'enable') {
+      setNotice({ kind: 'ok', text: `已开启 /${name}` })
+    } else if (action === 'reveal') {
+      setNotice({ kind: 'ok', text: `已在文件管理器里定位 /${name}` })
+    }
+    await Promise.all([load(true), loadDisabled()])
+  }
+
+  const undoUninstall = async (id) => {
+    if (typeof id !== 'string' || id === '') return
+    setBusySkill('(undo)')
+    const result = await skillOp('restore', { id, cwd: props.cwd })
+    setBusySkill('')
+    if (result.ok !== true) {
+      setNotice({ kind: 'err', text: result.error ?? '撤回失败' })
+      return
+    }
+    setNotice({ kind: 'ok', text: '已撤回，技能回到原位置' })
+    await Promise.all([load(true), loadDisabled()])
+  }
+
+  /**
+   * Open the context menu at a viewport point, kept fully on screen.
+   * `event` may be a mouse or a touch event; both carry clientX/clientY.
+   */
+  const openMenu = (event, skill, disabled) => {
+    const width = 208
+    const height = disabled ? 84 : 168
+    const x = Math.max(8, Math.min(event.clientX, (window.innerWidth || 1024) - width - 8))
+    const y = Math.max(8, Math.min(event.clientY, (window.innerHeight || 768) - height - 8))
+    setMenu({ x, y, skill, disabled })
+  }
+
+  // Close the menu on any outside interaction — the same contract as a native
+  // context menu, so it never lingers over the composer.
+  //
+  // BUBBLE phase on purpose, and the menu stops the event itself: a capturing
+  // listener would run before the clicked item's own handler and close the menu
+  // out from under the click, so every action would silently do nothing.
+  useEffect(() => {
+    if (menu === undefined) return undefined
+    const close = () => setMenu(undefined)
+    const onKey = (event) => {
+      if (event.key === 'Escape') close()
+    }
+    document.addEventListener('pointerdown', close)
+    document.addEventListener('keydown', onKey)
+    window.addEventListener('blur', close)
+    window.addEventListener('resize', close)
+    return () => {
+      document.removeEventListener('pointerdown', close)
+      document.removeEventListener('keydown', onKey)
+      window.removeEventListener('blur', close)
+      window.removeEventListener('resize', close)
+    }
+  }, [menu])
+
   const toggle = () => {
     if (!open) {
       // Pull first: a pin or a pick made on another client (desktop ↔ web ↔
@@ -467,6 +678,7 @@ function SkillPickerButton(props) {
       void syncSharedState()
       setUsage(loadUsage())
       void load()
+      void loadDisabled()
     }
     setOpen(!open)
   }
@@ -608,6 +820,27 @@ function SkillPickerButton(props) {
                         itemRefs.current[index] = el
                       }}
                       onClick={() => pick(skill.name)}
+                      onContextMenu={(event) => {
+                        // Right-click opens the actions menu; see the menu block
+                        // at the end of the panel. One glyph per row keeps the
+                        // list scannable.
+                        event.preventDefault()
+                        event.stopPropagation()
+                        openMenu(event, skill, false)
+                      }}
+                      onTouchStart={(event) => {
+                        // A phone has no right button: long-press opens the same
+                        // menu. Cancelled by any movement, so scrolling a long
+                        // list never pops it up by accident.
+                        const touch = event.touches?.[0]
+                        if (touch === undefined) return
+                        longPressRef.current = window.setTimeout(
+                          () => openMenu({ clientX: touch.clientX, clientY: touch.clientY }, skill, false),
+                          500,
+                        )
+                      }}
+                      onTouchEnd={() => window.clearTimeout(longPressRef.current)}
+                      onTouchMove={() => window.clearTimeout(longPressRef.current)}
                       onMouseEnter={(event) => {
                         setActive(index)
                         event.currentTarget.style.background = 'var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,0.12))'
@@ -685,6 +918,86 @@ function SkillPickerButton(props) {
                   })
                 })()}
               </div>
+              {/* Result of the last management action, with an undo for uninstall. */}
+              {notice !== undefined && (
+                <div style={noticeStyle}>
+                  <span style={{ flex: '1', color: notice.kind === 'err' ? 'var(--dsw-alias-label-error, #ff7b72)' : undefined }}>
+                    {notice.text}
+                  </span>
+                  {typeof notice.undo === 'string' && notice.undo !== '' && (
+                    <span
+                      role="button"
+                      tabIndex={-1}
+                      onClick={() => void undoUninstall(notice.undo)}
+                      style={{ cursor: 'pointer', textDecoration: 'underline', flex: 'none' }}
+                    >
+                      撤回
+                    </span>
+                  )}
+                </div>
+              )}
+              {/* Skills switched off. The official RPC never reports these, so
+                  without this section a disabled skill would be unreachable. */}
+              {disabledSkills.length > 0 && (
+                <div style={{ marginTop: '4px' }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '6px 10px 2px',
+                      color: 'var(--dsw-alias-label-tertiary, #8a94a6)',
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      letterSpacing: '0.04em',
+                    }}
+                  >
+                    <span>⏻ 已关闭</span>
+                    <span style={{ opacity: 0.7 }}>{disabledSkills.length}</span>
+                  </div>
+                  {disabledSkills.map((skill) => (
+                    <div
+                      key={`off-${skill.name}`}
+                      onContextMenu={(event) => {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        openMenu(event, skill, true)
+                      }}
+                      style={{
+                        ...itemStyle,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        opacity: 0.55,
+                      }}
+                    >
+                      <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '2px', flex: '1', minWidth: '0' }}>
+                        <span style={nameStyle}>{`/${skill.name}`}</span>
+                        <span style={descStyle}>{skill.description ?? ''}</span>
+                      </span>
+                      <span
+                        role="button"
+                        tabIndex={-1}
+                        title="重新开启（把 SKILL.md.disabled 改回 SKILL.md）"
+                        aria-label="重新开启"
+                        onClick={() => void runSkillOp('enable', skill)}
+                        style={actionSpanStyle}
+                      >
+                        {busySkill === skill.name ? '…' : '⏻ 开启'}
+                      </span>
+                      <span
+                        role="button"
+                        tabIndex={-1}
+                        title="在文件管理器中定位"
+                        aria-label="在文件管理器中定位"
+                        onClick={() => void runSkillOp('reveal', skill)}
+                        style={actionSpanStyle}
+                      >
+                        📂
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
               {source === 'host' && (
                 <div style={sourceBadgeStyle} title="官方技能 API 不可用，列表来自本地目录扫描（与官方 / 补全同源）">
                   <span style={sourceBadgeTextStyle}>本地扫描</span>
@@ -696,6 +1009,73 @@ function SkillPickerButton(props) {
                   title="`/` 菜单的模糊+拼音搜索由本插件在运行时接管官方技能源（不依赖改写任何文件，issue #14）"
                 >
                   <span style={sourceBadgeTextStyle}>/ 增强：运行时接管</span>
+                </div>
+              )}
+              <div style={{ margin: '0 10px 8px', fontSize: '11px', color: 'var(--dsw-alias-label-tertiary, #8a94a6)' }}>
+                右键技能 = 置顶 / 关闭 / 定位 / 卸载（手机长按）
+              </div>
+              {/* The actions menu. Rendered here (not inside the row) so it can
+                  be positioned against the viewport and never clipped by the
+                  list's own scrolling. */}
+              {menu !== undefined && (
+                <div
+                  style={{ ...menuStyle, left: `${menu.x}px`, top: `${menu.y}px` }}
+                  onPointerDown={(event) => event.stopPropagation()}
+                >
+                  <div style={menuHeaderStyle}>{`/${menu.skill.name}`}</div>
+                  {!menu.disabled && (
+                    <div
+                      style={menuItemStyle}
+                      role="button"
+                      tabIndex={-1}
+                      onClick={() => {
+                        setMenu(undefined)
+                        togglePin(menu.skill.name)
+                      }}
+                    >
+                      {pinned.includes(menu.skill.name) ? '📌 取消置顶' : '📌 置顶到顶部'}
+                    </div>
+                  )}
+                  <div
+                    style={menuItemStyle}
+                    role="button"
+                    tabIndex={-1}
+                    onClick={() => {
+                      const target = menu.skill
+                      const turningOff = !menu.disabled
+                      setMenu(undefined)
+                      void runSkillOp(turningOff ? 'disable' : 'enable', target)
+                    }}
+                  >
+                    {menu.disabled ? '⏻ 开启' : '⏻ 关闭（agent 也不再加载）'}
+                  </div>
+                  <div
+                    style={menuItemStyle}
+                    role="button"
+                    tabIndex={-1}
+                    onClick={() => {
+                      const target = menu.skill
+                      setMenu(undefined)
+                      void runSkillOp('reveal', target)
+                    }}
+                  >
+                    📂 在文件管理器中定位
+                  </div>
+                  {!menu.disabled && (
+                    <div
+                      style={{ ...menuItemStyle, color: 'var(--dsw-alias-label-error, #ff7b72)' }}
+                      role="button"
+                      tabIndex={-1}
+                      onClick={() => {
+                        const target = menu.skill
+                        setMenu(undefined)
+                        if (!window.confirm(`卸载 /${target.name}？\n\n它会被移进备份目录（不是删除），面板里可以撤回。`)) return
+                        void runSkillOp('uninstall', target)
+                      }}
+                    >
+                      🗑 卸载（移入备份，可撤回）
+                    </div>
+                  )}
                 </div>
               )}
             </>

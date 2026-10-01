@@ -24,6 +24,17 @@ import path from 'node:path'
 
 import { isDirectoryEntry } from './dir-entry.js'
 import { dshHome, healUiSkillPatches, revertUiSkillPatches } from './patch-ui-skill.js'
+import {
+  CLIENT_HEADER,
+  DISABLED_ENTRY,
+  ENTRY,
+  listSkillBackups,
+  resolveSkillPath,
+  restoreSkillBackup,
+  revealSkill,
+  setSkillDisabled,
+  uninstallSkill,
+} from './skill-ops.js'
 
 /** Required services: the route registry and the prompt band. */
 export const inject = ['webServer', 'systemPrompt']
@@ -163,10 +174,21 @@ async function scanSkillsDirInto(map, dir) {
     if (!(await isDirectoryEntry(dir, entry))) continue
     const skillDir = path.join(dir, entry.name)
     let content
+    let entryFile = ENTRY
+    let disabled = false
     try {
-      content = await readFile(path.join(skillDir, 'SKILL.md'), 'utf8')
+      content = await readFile(path.join(skillDir, ENTRY), 'utf8')
     } catch {
-      continue
+      // A disabled skill keeps its entry under a different name, which the
+      // official provider ignores entirely. The panel still has to list it, or
+      // there would be no way to switch it back on.
+      try {
+        content = await readFile(path.join(skillDir, DISABLED_ENTRY), 'utf8')
+        entryFile = DISABLED_ENTRY
+        disabled = true
+      } catch {
+        continue
+      }
     }
     const meta = parseFrontmatter(content)
     // The picker is a human-facing surface, so honour the invocation policy:
@@ -181,6 +203,8 @@ async function scanSkillsDirInto(map, dir) {
       name: meta.name ?? entry.name,
       description: meta.description ?? '',
       path: skillDir,
+      entry: entryFile,
+      disabled,
     })
   }
 }
@@ -365,6 +389,105 @@ async function handleSharedState(req, res, url) {
 }
 
 /**
+ * Every root a skill may live in, in the order the scanner reads them.
+ * Single source of truth: `skill-ops` must not re-derive these.
+ */
+function allSkillRoots(cwd) {
+  const roots = [userAgentsSkillsDir(), userSkillsDir()]
+  if (typeof cwd === 'string' && cwd !== '') {
+    roots.push(path.join(cwd, '.agents', 'skills'), path.join(cwd, '.dsh', 'skills'))
+  }
+  return roots
+}
+
+/**
+ * `POST /dsh-skill-picker/skill` — disable / enable / reveal / uninstall /
+ * restore a skill, and list the uninstall backups.
+ *
+ * Three guards, in order:
+ *
+ *  1. The request must carry `x-dsh-skill-picker: 1`. Plugin routes bypass the
+ *     web server's auth gate (they are reachable without a cookie), and these
+ *     actions rename and move files. A cross-site `fetch` cannot set a custom
+ *     header without a CORS preflight the host does not answer, so this header
+ *     is what keeps an arbitrary web page out.
+ *  2. The target path must resolve inside a known skill root. Anything else —
+ *     the root itself, a file nested inside a skill, `../..`, or an absolute
+ *     path elsewhere — is refused before any filesystem call.
+ *  3. Nothing is ever deleted. "Uninstall" moves the skill into
+ *     `$DSH_HOME/skill-backups/` beside a manifest, and `restore` moves it back.
+ */
+async function handleSkillOp(req, res, url) {
+  const json = (code, payload) => {
+    res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' })
+    res.end(JSON.stringify(payload))
+  }
+  if (req.method !== 'POST') {
+    json(405, { ok: false, error: 'POST only' })
+    return
+  }
+  if (req.headers[CLIENT_HEADER] !== '1') {
+    json(403, { ok: false, error: 'missing client header' })
+    return
+  }
+  try {
+    const body = await readJsonBody(req)
+    const cwd = url.searchParams.get('cwd') ?? undefined
+    const roots = allSkillRoots(cwd)
+    const action = String(body?.action ?? '')
+
+    if (action === 'backups') {
+      json(200, { ok: true, backups: await listSkillBackups(roots) })
+      return
+    }
+    if (action === 'restore') {
+      json(200, { ok: true, ...(await restoreSkillBackup(body?.id, roots)) })
+      return
+    }
+
+    // Resolve by NAME through the host's own scan, never by a path the browser
+    // supplied: the panel's primary source is the official `skills/list` RPC,
+    // whose DTO is not guaranteed to carry a filesystem path — and a name the
+    // host looks up itself cannot point outside the skill roots at all.
+    const name = String(body?.name ?? '')
+    if (name === '') {
+      json(400, { ok: false, error: 'name is required' })
+      return
+    }
+    const known = (await scanSkills(cwd)).find((skill) => skill.name === name)
+    if (known === undefined) {
+      json(404, { ok: false, error: `no skill named "${name}"` })
+      return
+    }
+    const target = resolveSkillPath(known.path, roots)
+    if (target === undefined) {
+      json(403, { ok: false, error: 'that skill lives outside the skill roots' })
+      return
+    }
+
+    if (action === 'disable') {
+      json(200, { ok: true, ...(await setSkillDisabled(target, true)) })
+      return
+    }
+    if (action === 'enable') {
+      json(200, { ok: true, ...(await setSkillDisabled(target, false)) })
+      return
+    }
+    if (action === 'reveal') {
+      json(200, { ok: true, revealed: revealSkill(target) })
+      return
+    }
+    if (action === 'uninstall') {
+      json(200, { ok: true, ...(await uninstallSkill(target)) })
+      return
+    }
+    json(400, { ok: false, error: `unknown action: ${action}` })
+  } catch (error) {
+    json(500, { ok: false, error: String(error?.message ?? error) })
+  }
+}
+
+/**
  * Mount the skills route and the prompt section.
  * @param ctx - context carrying webServer and systemPrompt.
  */
@@ -375,6 +498,10 @@ export function apply(ctx) {
         const url = new URL(req.url ?? '/', 'http://dsh')
         if (url.pathname === '/dsh-skill-picker/state') {
           await handleSharedState(req, res, url)
+          return
+        }
+        if (url.pathname === '/dsh-skill-picker/skill') {
+          await handleSkillOp(req, res, url)
           return
         }
         // cwd query carries the active session's workspace root from the client.
