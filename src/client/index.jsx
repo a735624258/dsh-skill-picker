@@ -144,7 +144,18 @@ function focusComposer(from, onlyIfFocused = false) {
         : null
       if (editor !== null && editor !== undefined) {
         if (onlyIfFocused && document.activeElement !== editor) return false
-        if (typeof editor.focus === 'function') editor.focus()
+        if (typeof editor.focus === 'function') {
+          // Exempt this focus from dsh-pocket's mobile autofocus blocker: after
+          // picking a skill the caret SHOULD land back in the composer (that is
+          // the whole point of focusComposer). A timestamp, so the 60 ms guarded
+          // re-seat below is covered too; the blocker only trusts it for ~1.2 s.
+          try {
+            window.__dshSkillPickerFocusing = Date.now()
+          } catch {
+            /* a blocked window object is fine — the blocker just won't exempt us */
+          }
+          editor.focus()
+        }
         try {
           if (editor.isContentEditable === true) {
             const range = document.createRange()
