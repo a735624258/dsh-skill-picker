@@ -934,7 +934,7 @@ function SkillPickerButton(props) {
   }
 
   const togglePin = (name) => {
-    const next = pinned.includes(name) ? pinned.filter((n) => n !== name) : [...pinned, name]
+    const next = pinned.includes(name) ? pinned.filter((n) => n !== name) : [name, ...pinned]
     setPinned(next)
     savePinned(next)
   }
