@@ -234,8 +234,8 @@ function groupByPinned(skills, usage, pinned) {
   }
   return [
     // Plain titles, no emoji: these are section headings, and DSH's own
-    // headings (侧栏的「工作区」/「会话」) are plain text. User feedback: "加图标，那前面
-    // 一团火，这种图标看着不像 DSH 的风格".
+    // headings (侧栏的「工作区」/「会话」) are plain text. Icon-laden headings did
+    // not match DSH's own visual language, so no emoji here.
     { title: '置顶', items: pinnedList },
     { title: '最近使用', items: recent },
     { title: '全部', items: rest },
@@ -399,7 +399,7 @@ const popoverStyle = {
 /**
  * The search field, styled like the composer's own pickers.
  *
- * User feedback: "我这个搜索框能不能变成这个模型搜索的样式？我感觉确实可以跟 DSH 去统一一下".
+ * Styled after the model picker's own search field, for visual consistency with DSH.
  * The model picker's field (which is not an <input>, so its computed style could
  * not be read) is visibly BORDERLESS with a faint fill; this one had a 1px
  * border. So: a transparent border (keeps the geometry identical), the same
@@ -407,8 +407,8 @@ const popoverStyle = {
  * thin ring while focused, applied from `searchFocus` below since inline styles
  * cannot express `:focus`.
  *
- * Height: it used to be 36px (padding 6+6 + line-height 22 + border 1+1). 用户
- * tuned it by eye: "改成30看看，就是行高减个六" → "再加回3吧" → "32吧", so 32px,
+ * Height: it used to be 36px (padding 6+6 + line-height 22 + border 1+1). It was
+ * then tuned down by eye in three steps (30 → 33 → 32px), so 32px,
  * as an explicit border-box height with the text centred.
  *
  * Worth remembering: the first two numbers never actually rendered — the panel
@@ -1152,8 +1152,8 @@ function SkillPickerButton(props) {
                       </span>
                       {/* No pin glyph on the row any more: 置顶/取消置顶 lives in
                           the right-click menu, and the 置顶 group already shows
-                          which skills are pinned. User feedback: "那个置顶的按钮也不需要了
-                          吧，毕竟右键它就能有置顶". */}
+                          which skills are pinned. A row-level pin glyph would be
+                          redundant: pinning already lives in the right-click menu. */}
                     </button>
                   )
                   if (!showTitles) {
@@ -1216,7 +1216,7 @@ function SkillPickerButton(props) {
                   定位 / 卸载（手机长按）"), which did not line up with the rows
                   and got clipped to "手机…" — then shortened to this and kept
                   permanently, because at this length it is quiet and fits
-                  (User feedback: "我感觉你变成这一行就不错，那你就可以永久留着了").
+                  (short enough that keeping it visible at all times is fine).
                   Its left margin matches the row text (list padding 6 + row
                   padding 10) so it lines up with everything above it. */}
               <div
