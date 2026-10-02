@@ -114,7 +114,7 @@ async function skillOp(action, payload = {}) {
  * the click focused the row, the panel then unmounted, and focus fell back to
  * the body — so the user had to click the input again before typing. Picking
  * from the official `/` menu never has that problem, because the composer keeps
- * focus there. Users reported exactly this difference.
+ * focus there. 用户 reported exactly this difference.
  *
  * The first fix focused the editor but stopped there, and the caret landed at
  * the START of the line: focusing a `contenteditable` with no selection is
@@ -234,7 +234,7 @@ function groupByPinned(skills, usage, pinned) {
   }
   return [
     // Plain titles, no emoji: these are section headings, and DSH's own
-    // headings (侧栏的「工作区」/「会话」) are plain text. User feedback: "加图标，那前面
+    // headings (侧栏的「工作区」/「会话」) are plain text. 用户: "加图标，那前面
     // 一团火，这种图标看着不像 DSH 的风格".
     { title: '置顶', items: pinnedList },
     { title: '最近使用', items: recent },
@@ -358,7 +358,7 @@ const buttonStyle = {
  * bolted-on popup.
  *
  * The skill NAME used to be rendered in `--ds-font-family-code` (the monospace
- * face) because a `/skill` reads like a command — This was spotted it immediately:
+ * face) because a `/skill` reads like a command — 用户 spotted it immediately:
  * "我想你用和右下角选择模型里的英文和中文一样的字体". The model picker uses
  * `--dsw-font-family`, so that is what everything here uses now, and the sizes
  * follow the composer (14px / 24px) instead of the browser's default button size
@@ -376,7 +376,7 @@ const FONT_FAMILY = 'var(--dsw-font-family, -apple-system, BlinkMacSystemFont, "
  * Why not `absolute; right: 0` on the button's own wrapper — which is what it
  * used to be: the ⚡ sits next to the model picker, well left of the composer's
  * right edge, so the panel was right-aligned to *that* and threw itself across
- * the middle of the conversation, covering the text. This was spotted it.
+ * the middle of the conversation, covering the text. 用户 spotted it.
  */
 const popoverStyle = {
   position: 'fixed',
@@ -399,7 +399,7 @@ const popoverStyle = {
 /**
  * The search field, styled like the composer's own pickers.
  *
- * User feedback: "我这个搜索框能不能变成这个模型搜索的样式？我感觉确实可以跟 DSH 去统一一下".
+ * 用户: "我这个搜索框能不能变成这个模型搜索的样式？我感觉确实可以跟 DSH 去统一一下".
  * The model picker's field (which is not an <input>, so its computed style could
  * not be read) is visibly BORDERLESS with a faint fill; this one had a 1px
  * border. So: a transparent border (keeps the geometry identical), the same
@@ -517,7 +517,7 @@ const noticeStyle = {
  *   text          --dsw-alias-label-primary     (flips with the theme)
  *   hover         --dsw-alias-interactive-bg-hover
  *
- * Two wrong turns here, both caught in review:
+ * Two wrong turns here, both caught by 用户:
  *
  *  1. `--dsw-alias-bg-elevated` does not exist in DSH at all, so a hardcoded
  *     dark fallback always won while the text kept following the theme —
@@ -623,7 +623,7 @@ function SkillPickerButton(props) {
   /**
    * The notice is a toast, not a fixture — it dismisses itself.
    *
-   * Caught in review it sitting on screen indefinitely after a trivial "located it in
+   * 用户 caught it sitting on screen indefinitely after a trivial "located it in
    * the file manager" action. Anything carrying an undo gets a much longer
    * window, because dismissing it also removes the only way back.
    */
@@ -644,7 +644,7 @@ function SkillPickerButton(props) {
   /**
    * Which list the panel is showing: 'all' or the closed-skills view ('off').
    *
-   * The closed skills used to be a permanent section under the list; The user asked
+   * The closed skills used to be a permanent section under the list; 用户 asked
    * for them behind a small entry at the bottom-right instead, because a
    * section that is almost never used should not hold vertical space forever.
    */
@@ -856,7 +856,7 @@ function SkillPickerButton(props) {
    * The panel used to show "本地扫描" / "/ 增强：运行时接管" as badges under the
    * list. They are diagnostics for whoever is debugging, not something a user
    * needs on screen — they occupied two rows and said nothing useful day to day
-   * (the user's call, and he was right).
+   * (用户's call, and he was right).
    *
    * They are not simply dropped: "the plugin is fine" and "the plugin is not
    * running at all" look identical without them, which is the whole lesson
@@ -960,7 +960,7 @@ function SkillPickerButton(props) {
    * list is actually built, so the invariant is enforced here no matter which
    * source produced the data.
    *
-   * Caught in review the leak: a skill he had closed was still listed under 全部.
+   * 用户 caught the leak: a skill he had closed was still listed under 全部.
    */
   const disabledNames = new Set(disabledSkills.map((skill) => skill.name))
   const groups = groupByPinned(
@@ -1152,7 +1152,7 @@ function SkillPickerButton(props) {
                       </span>
                       {/* No pin glyph on the row any more: 置顶/取消置顶 lives in
                           the right-click menu, and the 置顶 group already shows
-                          which skills are pinned. User feedback: "那个置顶的按钮也不需要了
+                          which skills are pinned. 用户: "那个置顶的按钮也不需要了
                           吧，毕竟右键它就能有置顶". */}
                     </button>
                   )
@@ -1210,13 +1210,13 @@ function SkillPickerButton(props) {
               )}
               {/* The footer: a short hint on the left, the 「已关闭」 entry on the
                   right. It used to be a full section listing every disabled
-                  skill — too much room for something reached rarely (the user's
+                  skill — too much room for something reached rarely (用户's
                   call), so it is a small chip that opens its own view.
                   The hint itself: first written long ("右键技能 = 置顶 / 关闭 /
                   定位 / 卸载（手机长按）"), which did not line up with the rows
                   and got clipped to "手机…" — then shortened to this and kept
                   permanently, because at this length it is quiet and fits
-                  (User feedback: "我感觉你变成这一行就不错，那你就可以永久留着了").
+                  (用户: "我感觉你变成这一行就不错，那你就可以永久留着了").
                   Its left margin matches the row text (list padding 6 + row
                   padding 10) so it lines up with everything above it. */}
               <div
