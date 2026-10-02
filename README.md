@@ -3,145 +3,183 @@
 [![npm version](https://img.shields.io/npm/v/dsh-skill-picker.svg)](https://www.npmjs.com/package/dsh-skill-picker)
 [![license](https://img.shields.io/npm/l/dsh-skill-picker.svg)](https://github.com/a735624258/dsh-skill-picker/blob/main/LICENSE)
 
-> **技能记不住名字？官方 `/` 补全靠前缀记忆，装了几十个技能谁记得住？** 本插件让技能**看得见、翻得到、选得快**——点一下 ⚡，全部技能带描述排在你面前，搜索、点选、插入，随消息发出自动加载。
+> **给 DSH 的输入框加一个 ⚡ 按钮：点开是你装过的全部技能（带说明），搜一下、点一下，`/技能名` 就进了发送框，DSH 自己把技能加载起来执行。**
 
-## ⚡ 快速安装
+**English** — A skill picker for the DSH Web GUI. A ⚡ button in the composer lists every installed skill with its description; picking one inserts the official `/skill-name` gesture into your draft, so DSH loads that skill with your message.
 
-> 🤖 **给 AI/安装助手的提示（按优先级执行，保证装到最新版）**：
->
-> 1. **要最新版 / 不确定版本 → 走 GitHub 直装**。git 依赖直接拉 GitHub 最新 commit，**完全不受 npm `minimumReleaseAge` 24h 门禁影响，百分百新版**：
->    ```sh
->    dsh plugin --profile web add "git+ssh://git@github.com:a735624258/dsh-skill-picker.git"
->    ```
-> 2. **要 npm 正式版** → 先查最新版本号，再**指定版本**安装（禁止裸名）：
->    ```sh
->    npm view dsh-skill-picker version   # 例如 0.5.5
->    dsh plugin --profile web add dsh-skill-picker@0.5.5
->    ```
-> 3. ⚠️ **禁止执行裸名安装** `dsh plugin --profile web add dsh-skill-picker`：新版本发布后 **24 小时内**会被 pnpm `minimumReleaseAge` 门禁拦截并**自动落回旧版**——照着上面两条走就永远不会装错。
+| | |
+|---|---|
+| 当前版本 | v0.5.28 |
+| 许可 | MIT |
+| 平台 | DSH 网页端 / 桌面端（Electron）/ 手机浏览器 |
+| 内核 | DSH `0.1.x` 与 `0.2.x`（见 [7、兼容性](#7兼容性与注意事项)） |
 
-一条命令装好并注入 DSH web profile，重启 `dsh web`（或刷新页面）即生效。HTTPS clone 受限时用 SSH 形式（见下文 [安装](#安装) 的网络特例）。
+---
 
-DSH Web GUI 的技能选择器：在输入框（composer）工具行右侧加一个按钮，点开可以**搜索并点选已安装的技能**，选中后把官方 `/技能名` 手势插入发送框——随消息一起发出，DSH 原生机制就会自动加载该技能并执行。WorkBuddy 式"把技能写进发送框"的交互，DeepSeek Harness 复刻版。
+## 1、为什么要做
 
-English: A skill picker for the DSH Web GUI — a button in the composer's right tool row opens a searchable list of installed skills; picking one inserts the official `/skill-name` gesture into the draft, so DSH's native user-invocation path loads the skill with your message.
+DSH 本来就会认 `/技能名` 这个手势 —— 你在消息里写 `/ji-zhang 午饭 12 块`，它自动加载「记账」技能来执行。**官方只配了一个 `/` 补全，而它靠两样东西：**
 
-当前版本：**v0.5.29**（**隐私清理：移除仓库内容里出现的真实姓名**（无功能变化，见更新日志 v0.5.29）+ **修「后置顶的技能排在置顶列表最后」**（改为新置顶进最前，与微信 / Notion 一致，详见更新日志 v0.5.28）+ **手机端"插完技能光标不回"的配套豁免牌**（`window.__dshSkillPickerFocusing`，配合 `dsh-pocket` 的「切会话不抢焦点」补丁 —— 两个补丁是一对，只装一边手机上就会复发 ✗；见 `local/dsh-pocket-mobile-fix/skill-panel-fileguard-fix-2026-10-02.md`）+ **⚡ 面板可管理技能**：右键/长按 → 置顶 · 关闭（`SKILL.md`→`SKILL.md.disabled`，agent 也不再加载）· 定位 · 卸载（移进备份目录，从不删除，可撤回）；「已关闭」收成右下角一个入口；**光标落回输入框末尾**；**右键菜单跟随主题且实心**；**面板字体与 DSH 统一**（`--dsw-font-family`，分组小标题对齐侧栏规格）；**零 emoji**；提示条自动消失；搜索框无边框 32px + **面板带 `data-dsh-skill-picker` 标记**（供 dsh-pocket 手机端放行，见 `local/dsh-pocket-mobile-fix/skill-panel-fileguard-fix-2026-10-02.md`）+ **「置顶 / 最近使用」在桌面端、网页端和手机之间共用同一份**（存于 `$DSH_HOME/dsh-skill-picker-state.json`，不再各存各的 localStorage）+ **`/` 菜单与 ⚡ 面板排序完全一致**（空查询也走同一套排序，置顶排最前）+ **修掉「打 `/` 菜单开到下面去」**（microtask 竞态：技能组必须 0 个 `await` 才抢得到高亮）+ **文件补丁退休**（`/` 增强改为运行时接管，默认不再改任何官方文件，并会自动把改过的还原）+ 模糊/拼音匹配 + ⚡ 面板置顶分组 + 搜索结果按匹配相关度排序）
+1. **前缀匹配** —— 你得打对技能名的开头几个字母
+2. **你的记忆** —— 装了五六十个技能，谁记得住每个叫什么
 
-## 为什么用它（vs 官方 `/` 补全）
+于是最常见的场面是：明明装了「备份记忆」，却想不起来它叫 `backup-memory`，翻不到就放弃了。
 
-官方内置了 `/` 技能补全，但它是**记忆驱动**的——你得先记得技能名，打 `/` + 前缀才能过滤出来。技能一多就抓瞎：
+## 2、它做什么
 
-| | 官方 `/` 补全 | dsh-skill-picker |
-|---|---|---|
-| 触发 | 输入框打 `/` | 输入框旁 ⚡ 按钮 |
-| 查找方式 | 前缀记忆驱动，**忘了名字就找不到** | 全列表浏览 + 关键字搜索，**忘了名字也能翻到** |
-| 中文技能 | 只能打名字/前缀 | **拼音直搜**：`ji yi` / `jiyi` / `jy` 都能搜到「备份记忆」类中文技能（v0.3.0） |
-| 排序 | 固定 | **最近使用置顶、常用靠前** |
-| 描述可见 | 精简 | 完整描述一眼看全 |
+1. **看得见** —— 输入框旁边一个 ⚡，点开是全部技能 + 完整描述
+2. **搜得到** —— 中文、拼音（`jiyi` / `ji yi` / `jy`）、英文都行，技能名和描述一起搜
+3. **选得快** —— 最近使用靠前、可手动置顶、`↑↓` + `Enter` 全程键盘
+4. **管得了** —— 右键（手机长按）：置顶 / 关闭 / 在文件管理器中定位 / 卸载（移入备份，可撤回）
+5. **到处一致** —— 置顶和最近使用在桌面端、网页端、手机之间共用同一份
 
-**记得名字用官方，忘了名字用本插件——两者互补，可同时使用。**
+**它和官方 `/` 补全不冲突，可以同时用**：记得住名字用官方，记不住用它。
 
-## 特性
+## 3、长什么样
 
-- ⚡ 一键弹出全部技能（闪电图标，人人看得懂）
-- **`/` 直接补全**：输入斜杠即列出全部技能，**模糊搜索**（技能名+描述任意匹配）+ **常用排序**（v0.2.0）
-- 🔤 **拼音搜索**：技能名和描述都生成拼音索引（全拼带空格 `ji yi` / 连打 `jiyi` / 首字母 `jy`），中文技能不用记字就能搜（v0.3.0）
-- 🔍 实时搜索（技能名 / 描述 / 拼音都搜）
-- ⌨️ **键盘导航**：弹层内 ↑↓ 选择、Enter 插入、Esc 关闭，全程不碰鼠标（v0.2.2）
-- 🧠 **最近使用置顶、常用靠前**的智能排序（WorkBuddy 同款）
-- 📋 走官方宿主 skills API（与 DSH 内置 `/` 补全同一数据源，自动覆盖用户级+项目级技能）
-- 🧩 插入官方 `/技能名` 手势，加载/执行走 DSH 原生机制，**零 agent 侧改动**
-- 🎨 跟随 Web UI 主题（CSS 变量），浅色/深色自适应
-- 📦 纯 client + host 双半插件（拼音库已打包进 client bundle，无额外运行时安装）
+![dsh-skill-picker 技能面板：搜索框、置顶与最近使用分组、右键管理菜单](docs/skill-picker-panel.png)
 
-## 安装
+## 4、怎么用
+
+1. 看输入框右下角（模型选择器旁边），点 **⚡**
+2. 敲关键字（中文 / 拼音 / 英文），列表实时过滤；也可以直接 `↑↓` 翻
+3. 点中技能（或按 `Enter`）—— 发送框里出现 `/技能名 `，**光标停在末尾**
+4. 接着把话说完，回车发送 —— DSH 自动加载这个技能
+
+例子：点 ⚡ → 搜 `jiyi` → 点 `/ji-zhang` → 打上「今天午饭 12 块」→ 发送。
+
+| 操作 | 效果 |
+|---|---|
+| 点 ⚡ | 打开技能面板 |
+| `↑` `↓` / `Enter` / `Esc` | 选择 / 插入 / 关闭 |
+| 右键技能行（手机长按 500ms） | 管理菜单：置顶 / 关闭 / 定位 / 卸载 |
+| 面板右下角「已关闭 N」 | 查看并恢复被关闭的技能 |
+| 输入框直接打 `/` | 官方斜杠菜单（本插件同样增强了它的匹配与排序） |
+
+## 5、安装
+
+### 5.1 三条路，按需要选一条
+
+1. **要最新版** —— GitHub 直装（git 依赖直接拉最新 commit，不受 npm 24 小时门禁影响）
+   ```sh
+   dsh plugin --profile web add "git+ssh://git@github.com:a735624258/dsh-skill-picker.git"
+   ```
+2. **要 npm 正式版** —— 先查版本号，再按版本号装（**别用裸名**）
+   ```sh
+   npm view dsh-skill-picker version                      # 例如 0.5.28
+   dsh plugin --profile web add dsh-skill-picker@0.5.28
+   ```
+3. **要改代码** —— clone 下来用 link 模式装
+   ```sh
+   git clone https://github.com/a735624258/dsh-skill-picker.git
+   dsh plugin --profile web add link:/path/to/dsh-skill-picker
+   ```
+
+> ⚠️ 裸名安装（`add dsh-skill-picker`）在新版本发布后 **24 小时内**会被 pnpm 的 `minimumReleaseAge` 门禁拦下、**自动落回旧版**。上面三条路照走就不会装错。
+
+### 5.2 装完必须重启
+
+host 路由是**进程启动时加载**的，只开个新标签页不生效：
+
+| 你用的是 | 怎么重启 |
+|---|---|
+| 网页端 | 重启 `dsh web` 进程，必要时 `Ctrl+F5` 硬刷 |
+| 桌面端 | 重启 `DeepSeek Harness.exe` 进程 |
+
+### 5.3 网络与卸载
+
+1. HTTPS 慢或不通 → 改用 SSH：`git clone git@github.com:a735624258/dsh-skill-picker.git`
+2. 想让 pnpm 一律走 SSH：`git config --global url."git@github.com:".insteadOf "https://github.com/"`
+3. `dsh` 被 PowerShell 执行策略挡下 → `powershell -ExecutionPolicy Bypass -Command "dsh plugin --profile web add link:C:\path\to\dsh-skill-picker"`
+4. 卸载：`dsh plugin --profile web remove dsh-skill-picker`
+
+## 6、它是怎么做到的
+
+```
+[客户端]  输入框旁的 ⚡ 按钮
+             ↓ 取技能列表（先官方 skills API，失败回退宿主扫描）
+[宿主]    技能目录 → 名字 + 描述
+             ↓ 你点选
+[客户端]  把 "/技能名 " 追加进发送框
+             ↓ 发送
+[DSH]     agent/pre-step 认出 /技能名 手势 → 加载技能 → 执行
+```
+
+**本插件只补 UI 这一层**，加载与执行走 DSH 官方既有机制（`dsh-tool-skill` 扫描用户消息里的 `/kebab-case-name`），不碰 agent、不改官方代码。
+
+1. **列表两条路** —— 优先走官方宿主 skills API（`remote.skills.list`，与官方 `/` 补全同源、自动含用户级 + 项目级），不可用时回退到宿主扫描路由
+2. **`/` 菜单的模糊 + 拼音**（v0.5.15 起）—— 运行时接管官方触发源，**一个文件都不动**。原因：官方不允许注册同名 `/` 源（重名直接抛错），而改官方文件在 `app.asar` / pnpm 硬链接 / 悬空软链下会静默失效
+3. **技能管理路由有三道闸** —— 必须带 `x-dsh-skill-picker: 1` 自定义头；客户端只报技能名、路径由宿主自己查；路径必须恰好落在已知技能根的一层之下。**「卸载」从不删除**，只移进 `$DSH_HOME/skill-backups/`
+4. **出错不拖垮** —— 插槽缺失时静默跳过，扫描失败返回空列表，状态同步失败退化成纯本地
+
+## 7、兼容性与注意事项
+
+| 内核版本 | 状态 |
+|---|---|
+| `0.1.0-rc.6` ~ `0.1.x` | 支持 |
+| `0.2.0-rc.1` / `rc.2` 及 `0.2.x` | 支持（当前主用、实测） |
+| `1.0.0` 及以上 | 需要重新确认 |
+
+1. **peer 范围写得宽是故意的** —— `^0.1.0-rc.6 || >=0.2.0-rc.1 <1.0.0-0`。内核包与内核锁步同版本，钉死一个小版本线会让插件在内核升级时被**误拒**（日志一句 `skipping profile bundle`，表现是 ⚡ 按钮凭空消失）。「已验证到哪一版」以 `package.json` 的 `dsh.compatibility.dshReleases` 为准
+2. **技能读哪些目录** —— 项目级 `<工作区>/.dsh/skills`、`<工作区>/.agents/skills`；用户级 `~/.dsh/skills`、`~/.agents/skills`（`$DSH_AGENTS_HOME` 可覆盖）；同名时项目级优先
+3. **符号链接 / Junction 型技能会被跟随读取**；`user-invocable: false` 的技能不列出（列出来点了也会被官方静默跳过）
+4. **桌面端无需任何手工处理**（v0.5.15 起）：官方技能 UI 在 `app.asar` 里还是普通目录都不影响
+5. **手机端需配套** —— `dsh-pocket` 的「切会话不抢焦点」补丁与本插件的 `window.__dshSkillPickerFocusing` 豁免牌是一对，只装一边会出现「切会话抢焦点」或「插完技能光标不回」
+6. **暂不支持**自定义技能目录（官方 `customSkillDirs`）—— 欢迎 PR
+
+## 8、开发
 
 ```sh
-# 方式一：GitHub 克隆 + link（推荐，无需发布 npm）
-git clone https://github.com/a735624258/dsh-skill-picker.git
-dsh plugin --profile web add link:/path/to/dsh-skill-picker
-
-# 方式二：Git 依赖直装
-dsh plugin --profile web add "github:a735624258/dsh-skill-picker"
-
-# 方式三：发布到 npm 后（预构建安装，体验最佳）
-# ⚠️ 用具体版本号安装（minimumReleaseAge 门禁会在发布后 24h 内拦截裸名，
-#    自动落回旧版）——先查最新版本再指定安装：
-npm view dsh-skill-picker version   # 例如 0.5.4
-dsh plugin --profile web add dsh-skill-picker@0.5.4
+npm install                                    # 装依赖
+npm run build                                  # src/ → lib/（client bundle 必须打成 __ModuleLoader__ 握手）
+dsh plugin --profile web add link:$PWD         # link 模式装进 web profile，改源码即生效
+node --test                                    # 测试
 ```
 
-> 注：已发布 npm（`npm view dsh-skill-picker` 可见 0.3.2），方式三可直接安装；未发布时请用方式一或方式二。
-> 若 `dsh` 命令因 PowerShell 执行策略被拒（`File ... cannot be loaded`），用：
-> `powershell -ExecutionPolicy Bypass -Command "dsh plugin --profile web add link:C:\path\to\dsh-skill-picker"`
-
-**网络特例（国内/HTTPS 受限时）**：
-- 方式一的 `git clone` 走 HTTPS 慢或不通时，改用 SSH：`git clone git@github.com:a735624258/dsh-skill-picker.git`
-- 方式二的 `github:` 简写强制 HTTPS clone；仅 SSH 可用时改用：
-  `dsh plugin --profile web add "git+ssh://git@github.com:a735624258/dsh-skill-picker.git"`
-  （或先执行 `git config --global url."git@github.com:".insteadOf "https://github.com/"` 让 pnpm 走 SSH）
-- 方式三新版本发布后 **24 小时内**裸名会被 pnpm 的 minimumReleaseAge 门禁挡到旧版（如装到 0.2.0）；急用最新请指定版本：`dsh plugin --profile web add dsh-skill-picker@0.3.1`
-
-重启 `dsh web`（或刷新页面加载新 bundle）后生效。
-
-## 用法
-
-1. 打开任一会话，在输入框工具行右侧找到**⚡ 按钮**
-2. 点击弹出技能列表（可输入关键字或**拼音**过滤，如 `ji yi` 搜「记忆」）
-3. **↑↓** 选择、**Enter** 插入（或直接鼠标点选）→ 发送框自动出现 `/技能名 `
-4. 继续输入你的话并发送——DSH 会识别 `/技能名` 手势，自动加载该技能并按其指令执行
-
-示例：点选 `duo-xuan-pi-gai` 后发送框变为 `/duo-xuan-pi-gai 帮我批改多选`，发送后技能自动加载。也可以在输入框直接打 `/duo xuan`、`/duoxuan` 靠拼音补全选到它。
-
-## 原理
-
-DSH 的 [dsh-tool-skill](https://github.com/deepseek-ai/deepseek-harness) 在 `agent/pre-step` 阶段扫描用户消息中的 `/kebab-case-name` 手势（`SKILL_GESTURE` 正则），命中后把对应技能内容作为 `skill-invocation` 注入对话——即"用户消息里写 `/技能名` 就会自动加载技能"是官方既有能力，只是没有 UI。
-
-本插件只补 UI 一层：
+> ⚠️ 改完源码**必须 `npm run build`**：`lib/client.js` 是构建产物，ESM 源码不能直接当 client bundle 加载（DSH web shell 要求 `window.__ModuleLoader__.load({ id, factory })` 握手格式），否则启动报 `loaded without registering "dsh-skill-picker"`。
 
 ```
-[client]  ⚡ 按钮 → fetch('/dsh-skill-picker/skills')
-                    ↓
-[host]    扫描用户级 $DSH_HOME/skills + 项目级 <cwd>/.dsh/skills 等 → 技能目录（name + description）
-                    ↓
-[client]  点选 → inputActions.setDraft(draft + '/技能名 ')
-                    ↓
-[DSH]     agent/pre-step 识别手势 → 自动加载技能 → 执行
+dsh-skill-picker/
+├── package.json            # dsh.bundle.patch + dsh.client 声明 + 兼容性表
+├── cordis.patch.yml        # bundle patch：把插件行插进 web profile
+├── build.mjs               # esbuild 构建：host ESM + client CJS
+├── src/
+│   ├── index.js            #   host：技能目录路由 + agent 引导段
+│   ├── skill-ops.js        #   host：关闭 / 开启 / 定位 / 卸载 / 撤回
+│   ├── patch-ui-skill.js   #   host：旧文件补丁（默认关闭）+ 自动还原
+│   ├── dir-entry.js        #   目录项读取（跟随符号链接 / Junction）
+│   └── client/
+│       ├── index.jsx       #   client：⚡ 面板（搜索 / 分组 / 排序 / 右键菜单）
+│       ├── slash-source.js #   client：`/` 菜单的运行时接管
+│       ├── shared-state.js #   client：跨端共享的置顶 / 最近使用
+│       └── session-view.js #   client：会话身份与工作区 cwd
+├── lib/                    # 构建产物（勿手改）
+├── test/                   # node --test 用例（8 个文件）
+└── docs/                   # 截图
 ```
 
-- client 半：注册到官方 `conversation.input.right` 插槽（composer 工具行、发送按钮左侧的控件位），**技能列表优先走官方宿主 skills API**（`remote.skills.list`——与 DSH 内置 `/` 补全同源，会话作用域，自动含用户级/项目级技能），失败时回退到 host 扫描路由；插入文本走框架输入机的 `inputActions.setDraft`（单一路径，撤销/草稿持久化自动处理）；最近/常用排序 + 拼音索引（`pinyin-pro`）在 client 侧生成，按技能缓存
+测试最近一次结果：**88 用例 / 87 通过 / 1 跳过 / 0 失败**（跳过那条需要 Windows 建符号链接的权限）。
 
-## 与官方 `/` 补全的关系（v0.4.0 起：增强，而非并列）
+## 9、更新日志
 
-**v0.2.0–0.3.4**：插件注册了一个独立的 `/` 候选源（`skill-fuzzy`），与官方 ui-skill 源**并列**——菜单里出现两个技能分组，搜索行为相互独立（冲突风险、视觉重复）。**这条路已被官方堵死**：`inputTriggers.registerSource` 对 `(trigger, name)` 有唯一性硬检查，重名直接抛 `slash source "/skill" is already registered`。
+### 9.1 版本速览
 
-**v0.4.0–v0.5.13**：改为给官方 `@deepseek-ai/dsh-client-ui-skill` 包的 candidates **打文件补丁**——候选逻辑从 `skill.name.startsWith(query)`（前缀匹配）换成调用插件注入的全局函数 `window.__dshSkillPickerFuzzy`（fuzzysort 模糊 + pinyin-pro 拼音 + 最近/常用排行）。**v0.5.1 起由 host 端每次启动自动应用**（另加 `order: 2→-1`：技能组排在命令组之上），首次修改前自动备份 `.bak`。**代价是极度依赖"那个文件是一个可写的普通文件"**——打包桌面端（`app.asar` 内）、pnpm 硬链接、迁移后悬空的软链，任一情况都让它静默失效。
+| 版本 | 一句话 |
+|---|---|
+| **v0.5.28** | 新置顶的技能排到「置顶」分组的最前面（npm 当前最新） |
+| **v0.5.27** | 手机端「插完技能光标不回」的配套豁免牌 |
+| **v0.5.26** | ⚡ 面板可管理技能（右键菜单）+ 12 项细节修复 |
+| **v0.5.25** | 面板弹出位置改成贴窗口右边缘 |
+| **v0.5.24** | 去掉面板底部两个诊断徽标（搬进 tooltip + 控制台） |
+| **v0.5.23** | ⚡ 面板里可直接管理技能：置顶 / 关闭 / 定位 / 卸载（可撤回） |
+| **v0.5.22** | 置顶与最近使用跨端共用一份；修「打 `/` 菜单开到下面去」 |
 
-**v0.5.15 起（首选路径）**：**改用运行时接管，不碰任何文件**。官方的 `inputTriggers` 服务把源注册表放在**实例字段 `live.sources`** 上，里面就是**活源对象**；而斜杠菜单是**每次调用现取** `source.candidates`：
+> v0.5.28 之后只做过两处**纯文档**改动（隐私清理、README 重构），**不单独占版本号**，见下方完整历史。
 
-```js
-// 注意：sources() / all() 不在服务上，它们在每个会话 controller 的 roster 里。
-// InputTriggerService 的成员只有：inject, live, constructor, registerSource, sessionOf, sessions
-const source = ctx.inputTriggers.live.sources.find((s) => s.trigger === '/' && s.name === 'skill')
-const original = source.candidates
-source.candidates = async (projection, args) => rank(await original(projection, { ...args, query: '' }), args.query)
-source.order = -1                                    // 技能组排在命令组之上
-const onPick = source.onPick                         // 选中记账
-source.onPick = (args) => { track(args?.candidate?.name); return onPick.call(source, args) }
-```
+### 9.2 完整历史
 
-> ⚠️ **这里踩过的坑（0.5.14 未发布版本）**：我最初把它写成 `ctx.inputTriggers.sources('/')`。那个 `{ sources, all }` 确实存在，但它属于**每个会话 controller 内部的 `roster` 对象**，不在服务上——于是查找永远返回 `undefined`，接管**静默地什么都没做**。现在 `findSkillSource()` 按 `live.sources` → `sources()` → `all()` → `roster.*` 依次尝试，并有回归测试锁死真实形状。
-
-关键点：官方 candidates 返回的是**已映射的展示项**、且已被官方自己的匹配器过滤过，所以必须用**空查询**问它要**全量**（`rankByName(items, "")` 原样返回全部），再自己排序。官方规则全部继承（`userInvocable` 过滤、子智能体会话排除、「仅用户可调用」文案）。**文件补丁保留为旧内核兜底**，两条路同时存在时不会打架（运行时接管始终以空查询取全量，不会双重过滤）。
-
-**效果**：官方「技能」分组**仍是唯一一个 `/` 技能列表**，只是匹配与排序被升级；⚡ 面板与 `/` 菜单共用**同一个 `rankPickerItems`**，因此匹配结果和显示顺序完全一致。接管成功时，⚡ 面板底部会显示 **「/ 增强：运行时接管」** 徽标 —— 一眼就能看出它到底有没有生效（这正是 0.5.14 那次翻车最该有的东西）。
-
-> 手动兜底（旧流程，v0.5.15 起已**不再需要**）：把官方包拷到 `profiles/web/local/dsh-client-ui-skill/`，profile package.json 加 `"@deepseek-ai/dsh-client-ui-skill": "link:…"`，`pnpm install` 后重启 DSH。仅当你的内核连 `inputTriggers` 服务都不提供时才还需要它。
-
-## 更新日志
-
-- **v0.5.29**：**把仓库内容里出现的真实姓名全部换成中性称呼** —— 起因是有用户指出：`README 里带了我的名字……这东西别人都能看到的呀，这不是私密的仓库啊`。**修法**：`src/client/index.jsx` 注释 **14 处** + `README.md` **9 处**，统一改为「用户 / 有用户 / 用户反馈 / User feedback / Users reported」等中性表达，并 rebuild 同步到 `lib/client.js`。**无功能变化**，测试仍为 `88 tests / 87 pass / 1 skipped / 0 fail`。**⚠️ 教训**：公开仓库里的一切文案（README、源码注释、Release 正文）都不该出现真实姓名。- **v0.5.28**：**修「后置顶的技能排在置顶列表最后」** —— 起因是有用户发现 `后面置顶的为什么排在置顶列表的最后面呢？按理来说，后面置顶的应该排在置顶列表的最前面才对呀`。**根因**：`togglePin()` 用的是 `[...pinned, name]`（**追加到数组末尾**），而 ⚡ 面板的 `groupByPinned()` **直接按这个数组的顺序**渲染「置顶」分组 → 于是最新置顶的那个落到了最后。**修法**：改成 `[name, ...pinned]`（新置顶进最前），与主流应用（微信 / Notion 的置顶行为）一致。**测试**：`npm test` **88 tests / 87 pass / 1 skipped / 0 fail**。
+- **文档（未发版）**：**把仓库内容里出现的真实姓名全部换成中性称呼** —— 起因是有用户指出：`README 里带了我的名字……这东西别人都能看到的呀，这不是私密的仓库啊`。**修法**：`src/client/index.jsx` 注释 **14 处** + `README.md` **9 处**，统一改为「用户 / 有用户 / 用户反馈 / User feedback / Users reported」等中性表达，并 rebuild 同步到 `lib/client.js`。**无功能变化**，测试仍为 `88 tests / 87 pass / 1 skipped / 0 fail`。**⚠️ 教训**：公开仓库里的一切文案（README、源码注释、Release 正文）都不该出现真实姓名。**同版还做了「README 全面重构」**（分区结构 + 截图 + 版本速览表，只动文档）。**两处均无功能变化，不单独占版本号。**
+- **v0.5.28**：**修「后置顶的技能排在置顶列表最后」** —— 起因是有用户发现 `后面置顶的为什么排在置顶列表的最后面呢？按理来说，后面置顶的应该排在置顶列表的最前面才对呀`。**根因**：`togglePin()` 用的是 `[...pinned, name]`（**追加到数组末尾**），而 ⚡ 面板的 `groupByPinned()` **直接按这个数组的顺序**渲染「置顶」分组 → 于是最新置顶的那个落到了最后。**修法**：改成 `[name, ...pinned]`（新置顶进最前），与主流应用（微信 / Notion 的置顶行为）一致。**测试**：`npm test` **88 tests / 87 pass / 1 skipped / 0 fail**。
 - **v0.5.27**：**给「插完技能把光标放回输入框」加一张豁免牌** —— 配套 `dsh-pocket` 手机端新补丁「切会话不抢焦点」。**起因**：手机端装上那个补丁后，它把**程序自己抢的焦点**一律退回 ✗ —— 而本插件的 `focusComposer()` **正是**程序主动聚焦（这正是它的意义所在），于是「插完技能光标不回来」**复发**。**修法**：`focusComposer()` 在 `editor.focus()` 之前写一个时间戳 `window.__dshSkillPickerFocusing = Date.now()`，那个拦截器看到 1.2 秒内的时间戳就**放行** ✓（用时间戳而不是布尔，是因为紧随其后还有一次 60ms 的守卫重定位 —— 一次设值同时覆盖两次聚焦）。**⚠️ 两个补丁是一对**：只装一边，手机上就会复发 ✗。完整背景与两侧补丁全文见 `local/dsh-pocket-mobile-fix/skill-panel-fileguard-fix-2026-10-02.md`。
 - **v0.5.26**：**四个细节修复 + 八个追加修复（全部是实机验收挑出来的）**：① 选完技能光标**先是不回来**、② 回来了但**落在开头**、③ 右键菜单在浅色主题下**看不清**、④ 深色主题下**半透明**；追加 ⑤ 提示条**不再常驻**、⑥「已关闭」**改成右下角一个入口**、⑦**字体统一到 DSH 自己的 UI 字体**、⑧**分组小标题对齐 DSH 规格 + 去掉 emoji**、⑨**修「已关闭的技能还出现在主列表里」**、⑩**行内那个置顶针也删掉**（改走右键菜单，至此面板零 emoji）、⑪**底部那句提示改成一行短的并永久保留**、⑫**搜索框改成"模型选择器那个"样式（无边框）**、⑬**面板加 `data-dsh-skill-picker` 标记**（配合 `dsh-pocket` 的手机端"文件守卫"放行 —— 那是个独立插件的 bug，详见 `local/dsh-pocket-mobile-fix/skill-panel-fileguard-fix-2026-10-02.md`）。**① 光标不回输入框**：他的原话 `点了按钮然后选了 skill，skill 的名字确实落到聊天框里了，但是没有光标闪烁，意味着我还要点一下聊天框才能继续打字；但如果你是通过输入斜杠、在出来的列表中点击 skill，那它是有闪烁光标的`。**根因**：点技能行时**焦点落在了那个按钮上**，随后面板关闭、按钮卸载 → **焦点掉回 `body`**，于是输入框有内容但没光标；官方 `/` 菜单没这问题，因为整个过程焦点一直在 composer 里。**修法**：`pick()` 之后用一个版本无关的 DOM 兜底把焦点还回去 —— 从 ⚡ 自己的节点**向上最多 8 层**找到包含编辑器的祖先并 `focus()`；放在 `requestAnimationFrame` 里执行，等面板卸载 + React flush 完。**② 光标落到了开头**：他紧接着截图指出 `/coding` 的光标在**斜杠前面**。**根因**：给 `contenteditable` 调 `focus()` 而**不给选区时，规范就是把光标放开头** —— 我上一版正是只 focus、没摆选区。**修法**：显式把 Range **塌缩到末尾**（等价于"鼠标点在这行末尾"，官方编辑器会同步 DOM 选区），并在 **60ms 后带守卫地再补摆一次**（只在输入框仍聚焦时才动，免得覆盖用户刚点的别处）—— 防的是富文本编辑器 focus 后又把自己的选区重置回去。⚠️ **再调一次 `setDraft` 是没用的**：文字没变它会直接 return，光标永远不动。**实测**：光标位置 **15 / 15**（= 文字长度）→ 末尾 ✅；**直接键入 `XYZ`** → `/backup-memory XYZ` ✅。**③④ 菜单配色（改了三次才对，过程值得记）**：他先在网页端（浅色主题）发现**字看不清**，再在桌面端（深色主题）发现**背景是半透明的**。**第一次错**：背景用了 `--dsw-alias-bg-elevated` + 深色兜底 —— 实测这个变量**在 DSH 里根本不存在**，所以深色兜底永远生效，而文字用的是**存在且跟随主题**的 `--dsw-alias-label-primary` → 浅色主题下 **深底深字，对比度实测 1.25**。**第二次错**：改用官方语义变量 `--dsw-specific-menu` —— 它存在，但在深色下是 **`#43454a73`（alpha 0.45）**，那是**配合 DSH 自己的背景模糊**用的；我没加模糊，于是对话内容直接透过菜单 ✓ 被他抓个正着（他的截图给了决定性证据：**同一屏上面板实心、菜单半透明**）。**最终修法**：背景改用**面板自己用的那个变量** `--dsw-specific-tip`（两个主题都是实心 ✓），并加 `backdropFilter: blur(8px)` 当保险；文字/悬停仍走主题变量。**实测（这次专门量"透明度"这个属性本身，因为前两轮就是没量它才来回翻车）**：浅色 → 面板与菜单**同为** `rgb(245,246,247)`、**alpha=1**、对比度 17.46；深色 → **同为** `rgb(53,54,56)`、**alpha=1**、对比度 11.57 ✅。**顺带**：右键菜单之前**完全没有 hover 反馈**，这次补上了（和面板行同一套做法）。**⑤ 提示条常驻不消失**：他问 `这个消息停留得也太久了吧，多少秒啊你` —— 提示条是 toast，本该自己消失，我漏了超时。**修法**：普通成功提示 **2.6 秒**自动消失；**带「撤回」的（卸载）给 10 秒**，因为撤销它等于撤掉唯一一条退路；面板重新打开时清空（上次的提示已经过期）。**验证教训**：我自己的探针先报"10.27 秒"、又报"产物里没这个数字"，**两次都是我的检查写错了**（探针在提示条消失后误抓到了「⏻ 已关闭」分组标题；检查条件写死 `10000` 而 esbuild 把它印成了 `1e4`）—— **他说"我测了其实对的"，是他对的。先怀疑自己的量具，再怀疑代码。** **⑥「已关闭」从常驻分组改成右下角一个入口**：他的原话是 `它应该跟我红方平齐，放在靠右下角的位置` + `点击后里面显示的都是所有已关闭的 skill` + `在已关闭的 skill 列表中右键可以像刚刚一样弹出列表` + `不然你这个"已关闭"是不是有点太占地方了，它一直显示的话`。**修法**：底部那行改成 `justify-content: space-between` —— 左边是操作提示（切到已关闭视图时提示也会随之变成「右键 = 开启 / 定位」），右边是一个**小胶囊** `⏻ 已关闭 N`；点它**整个列表切换**成已关闭视图（搜索框同样能过滤它，走同一个 `matchRank`），再点一次变 `← 全部技能` 切回来；视图里**右键/长按**弹同一个菜单（对已关闭的技能只给「开启 / 定位」，不给「置顶 / 卸载」）。面板每次打开**重置回全部视图**（免得它停在上次的视角里）。顺带删掉了没人用的 `actionSpanStyle`。**实测（真浏览器，用一个自己建的假技能走完整条路）**：全部视图 → 胶囊显示 `⏻ 已关闭 1` 且**右对齐** ✓、已关闭的技能**不在主列表里** ✓；点胶囊 → `all=false / listsClosed=true / listsNormal=false`、提示变成「右键 = 开启 / 定位（手机长按）」✓；右键 → 菜单**恰好**是 `/zz-view-selftest`、`⏻ 开启`、`📂 在文件管理器中定位` ✓；点开启 → 该行消失 ✓。**测试后验证过磁盘**：只剩他自己 8-13 关的 `web-design-guidelines` 一条，**64 个技能一个没动**。**⑦ 字体统一**：他的要求是 `我想你用和右下角选择模型里的英文和中文一样的字体，这样才显得跟 DSH 比较统一`。**先量再改**（避免又猜）：把模型选择器 `DeepSeek V4.1 Flash` 和面板里每处文字的 `fontFamily/size/weight/lineHeight` 全读出来对比，结果**字体族本来就一样**（都是继承 DSH 的 `--dsw-font-family`），真正不一致的是**技能名那一处**——它被我刻意写成了 **`--ds-font-family-code`（等宽代码字体）**，当初的理由是"`/技能名` 看起来像命令"。另外面板行还落在**浏览器给 `<button>` 的默认字号 13.3333px** 上（不是我声明的）。**修法**：新增 `FONT_FAMILY = var(--dsw-font-family, …)` 并**在面板根、搜索框、行、名称、描述、状态行、菜单**全部显式声明（不再靠继承碰运气），字号对齐 composer 的节奏（正文 14px / 行高 22-24px、次要文字 12px）；`ui-monospace` 依赖清零。**实测**：模型选择器 `14px / 400 / line-height 24px`、面板技能名 `14px / 400 / 22px`、搜索框 `14px`、描述与页脚 `12px` ✅。**教训**：我第一版探针又量错了元素（抓到了外层容器而不是 `nameStyle` 那个 span），所以第一次得出结论"字体本来就一样"——**量要对准真正落到属性上的那个元素**。**⑧ 分组小标题 + 去掉 emoji**：他继续追问 `这两个也是吗？感觉看着不像啊。就是这个小标题，还有，我感觉这图标没必要吧。加图标，那前面一团火，这种图标看着不像 DSH 的风格`。**照旧先量再改**：拿 **DSH 自己的分组标题**（侧栏「工作区」）当基准，测出我那个小标题是 **11px / 600 / letter-spacing 0.44px**，而 DSH 是 **14px / 400 / normal** —— 又小又粗还带字距，**这就是"不像"的全部原因**；改完两者**逐项一致**（连颜色都是同一个 `rgb(129,133,140)`）。**图标全部去掉**：分组标题的 📌/🔥/🗂️、右键菜单的 📌/⏻/📂/🗑、底部入口的 ⏻ 全部改成纯文字（分组标题本来就是标题，DSH 的标题也是纯文字）。**唯一保留的是行尾那个置顶针**（📌/📍）—— 它是有功能的开关（点一下置顶），只有置顶的行才亮。**后来他也把这一条否掉了**：`那个置顶的按钮也不需要了吧，毕竟右键它就能有置顶` —— 于是**行内那个针也删了**，置顶/取消置顶只走右键菜单（「置顶」分组本身就说明了哪些被置顶）。至此**整个面板零 emoji**（实测 `anyEmojiInPanel: false`），行内只剩名称 + 描述。**⑪ 底部提示的最终形态**：他先说 `这句话感觉有点影响美观，因为它和上面的都对不齐，而且它又显示不完全` —— 于是**对齐 + 缩短**，并做成"用过一次右键就永久隐藏"（`localStorage` 标记）。他看完之后改主意：`我感觉你变成这一行就不错，那你就可以永久留着了，因为它一直显示很短，可以留着` —— 于是**撤掉一次性逻辑，永久显示**「右键可管理 · 手机长按」（已关闭视图里是「右键可开启 · 手机长按」）。**实测**：连开三次（含用过菜单之后、整页刷新之后）提示**都在**、`aligned: true`（左边与行文字对齐 = 列表 6 + 行 10 的 margin-left:16px）、`truncated: false`（不再出现「手机…」）✅；那一版的一次性标记已从代码删净（`showHint`/`RC_HINT_KEY` 0 命中）。**⑫ 搜索框**：他的要求 `我这个搜索框能不能变成这个模型搜索的样式？我感觉确实可以跟 DSH 去统一一下`。**这次没能量到基准** —— 模型选择器里那个搜索框**不是 `<input>`**（三次探针分别在 input 列表、占位符匹配、全元素扫描里都找不到它），所以按**他两张截图的视觉差异**改：**去掉那 1px 边框**（透明边框以保持几何不变），保留淡填充；因为无边框就没有焦点提示，补上**聚焦时一圈细环**（`boxShadow: 0 0 0 1px`，用 React 的 `onFocus`/`onBlur` 实现 —— 内联样式写不了 `:focus`）。**实测**：失焦 `border: 1px solid rgba(0,0,0,0)` + 背景 `rgba(38,49,72,0.06)` + 无环；聚焦背景升到 `0.1` + 一圈 `0 0 0 1px`；**尺寸始终 324×36**，不会跳动 ✅。**后来他又微调高度**：`改成30看看，就是行高减个六` → `再加回3吧` → `32吧`。**关键坑（值得单独记）**：**前两个数字根本没生效** —— 面板是 `flex-direction: column` + `max-height` 的容器，**输入框作为 flex 子元素被压缩到了 21px**，所以不管写 30 还是 33 渲染出来都是 21（他"看不出变化"正是这个原因，我还只改了数字）。直到给输入框加 **`flex: none`**，声明的 `height` 才第一次真正生效 —— **在 flex 容器里改子元素高度，先确认它没被 `flex-shrink` 吃掉**。最终**实测 `height: 32px`** ✅。**⑨ 关闭的技能还出现在主列表里（他报的，严重）**：`我不是关闭了吗？这列表里居然还有他`。**先排除最常见的嫌疑**：全盘搜 `web-design-guidelines` 的副本 —— **没有第二份**，磁盘上就那一个目录、且确实是 `SKILL.md.disabled`（他自己 8-13 关的）。**根因**：取列表有**两条路** —— 官方 skills API，和「本地扫描」兜底；为了「已关闭」视图能工作，**我的扫描器是故意会返回 disabled 条目的**，但前端把两条路的返回值当成了**同一种形状** ✗ → 关掉的技能就从兜底那条路混进了主列表。**修两层**：① 扫描结果里 `disabled === true` 的直接不进主列表；② 主列表**再按名字排除**所有已关闭的技能 —— 这是唯一的构建点，**不管数据来自哪条路都兜得住**。**实测（用他真实的那个技能验，不造数据、不写任何文件）**：主列表 `mentionCount: 0` ✅、在主列表里主动搜 `web-design` 仍是 0 ✅、底部入口显示 `已关闭 1` ✅、「已关闭」视图里**恰好出现 1 次** ✅；测试后复验磁盘：仍关闭的只有他这一条、技能数 64 不变。全量 `npm test`：**88 tests / 87 pass / 0 fail**
 - **v0.5.25**：**修 ⚡ 面板的弹出位置：改成贴窗口右边缘，不再横跨正文**——用户反馈：`我感觉点这个按钮，列表出现的位置不太好。如果再靠右显示就好了`。**根因**：面板原本是 `position: absolute; right: 0`，**贴的是 ⚡ 按钮自己的右边缘** —— 而 ⚡ 挨着模型选择器、离输入框右边缘还有 200 多像素，所以面板被"右对齐"到那个位置，于是往左横跨半个屏幕、**压住对话正文**。**修法**：改成 `position: fixed` + `right: 24px`（贴窗口右边缘），纵向偏移仍由 ⚡ 按钮的 `getBoundingClientRect()` 量出来（**打开前就量好**，避免第一帧跳一下）。**实测（真实浏览器里量的坐标，不是目测）**：面板右边缘 x=**1488**、窗口宽 **1512** → 距右边 **24px** ✅；改之前它右边缘只会落在 ⚡ 按钮那里（x≈1083）。全量 `npm test`：**88 tests / 87 pass / 0 fail**
@@ -168,7 +206,7 @@ source.onPick = (args) => { track(args?.candidate?.name); return onPick.call(sou
 - **v0.5.12**：**修复 `user-invocable: false` 的技能仍出现在 ⚡ 面板（对应 issue #10）**——面板取数有两条路：① **官方宿主 API**（`remote.skills.list`）在**服务端就过滤好了**（`dsh-api-session-controller` 的 skill-catalog 里是 `.filter(isUserInvocable)`，且它的线上 DTO `SkillEntry` 只带 `modelInvocable`、**根本不带 `userInvocable`**）；② **本插件自己的兜底扫描路由**（`/dsh-skill-picker/skills`，面板底部显示「本地扫描」徽标那条）只读 `name` / `description`，**完全没读调用策略** —— 这就是 0.1.7 线（官方客户端 UI 包重构、兜底路径被触发）下面板会列出 `user-invocable: false` 技能的原因。**危害不止"多显示一条"**：点选后插入的 `/技能名` 手势会被 `dsh-tool-skill` 的 `!isUserInvocable(skill)` **静默跳过**——用户以为选中了，实际什么都没发生。修复：host 兜底扫描新增 `frontmatterBoolean()` / `isUserInvocableSkill()`，按官方 `dsh-skill-filesystem` 的 `parseInvocationPolicy` 完整对齐语义 —— 接受 YAML 布尔与**不分大小写**的 `true`/`false`、`yes`/`no`、`on`/`off`、`1`/`0`；**显式 `false` 不列出**；**非法拼写或遗留键（`userInvocable` / `modelInvocable` / `disableModelInvocation`）整条丢弃**（官方也是丢整条，而不是静默放行）；`disable-model-invocation: true` 只影响模型面，`/` 与面板照常列出。client 侧三个取数点（官方 API / 兜底 fetch / 喂给 `/` 的模糊匹配器）都加了 `isUserFacingSkill()` 守卫，同时认平铺 `userInvocable` 与嵌套 `invocation.userInvocable`，防内核将来更换协议形状。新增 6 个 `npm test` 回归用例：`user-invocable: false` 隐藏、`true`/省略保留、全部 false 拼写、非布尔值丢弃、遗留键丢弃、`disable-model-invocation: true` 仍列出
 - **v0.5.11**：**修复「补丁已就位也每次启动都打印 `ui-skill patch report`」（对应 issue #8）**——`healUiSkillPatches()` 返回的 `report.files` 是**逐目标文件的报告数组**：只要扫描到 ≥1 个目标文件就有一项，与这一轮**是否真的改动过无关**；而打印守卫用的正是 `report.files.length > 0`，等于把「找到目标」当成了「发生了变更」，于是**补丁早已 up-to-date 也每次启动都打印一行** `[dsh-skill-picker] ui-skill patch report: {…}`。这行虽然只是 `console.log`，但形态上落在启动日志第一行、长得像告警，很容易被误判成插件出问题（#8 就是这么来的），还会淹没真正需要关注的 `noop` / `errors`。现在改为按「这一轮到底发生了什么」判定：① **已是最新且无错 → 完全安静**；② 仅在**确实改过文件**（`patched` 非空）时打印报告，且只报这一轮真正动过的文件 + 全部错误；③ **锚点未命中（`noop` 非空）单独 `console.warn`**——它的语义是「官方实现又换了形态、增强**没打上**」，与 issue #7 的静默失效同类，不能再被淹没；④ 新增 `DSH_SKILL_PICKER_LOG=debug` 显式开关，需要完整报告（含 `skipped`）时按需打开。新增 7 个 `npm test` 回归用例：已就位时静默、无目标不重复报、真改动打一行、`noop` 转 warn、仅错误转 warn、改动+错误合并一行、debug 开关
 - **v0.5.10**：**修复全局安装下 `/` 补全增强静默失效（对应 issue #7）**——`uiSkillClientPaths()` 原先只枚举两个位置：`profiles/<profile>/local/dsh-client-ui-skill` 与 `profiles/<profile>/node_modules/@deepseek-ai/dsh-client-ui-skill`。但用**全局 `npm i -g @deepseek-ai/dsh`** 安装时，官方包位于**共享根** `profiles/node_modules/@deepseek-ai/dsh-client-ui-skill`（`readdir(profiles)` 只会给出 `node_modules` 和 `web` 两个条目，两个候选**全部落空**），于是 `found = []`、**两个补丁一次都没跑**——而且**完全无声**：`{"files":[],"errors":[]}` 与「补丁都已应用、全部 skipped」在输出上一模一样，用户和排查者都看不出补丁根本没生效，表现成「插件一切正常、技能列表能用，**就是拼音/模糊搜索是坏的**」。修复四件事：① 候选新增**共享根**（不属于任何单个 profile，放在循环外采集）；② 每个 profile 额外走一次 Node 自身解析 `createRequire().resolve()` 兜底，未枚举到的布局也能命中（按 realpath 去重，不会重复打补丁）；③ 跳过 `profiles/node_modules` 这个假 profile 条目；④ **`found.length === 0` 时 `console.warn` 大声报出**——这个静默正是 issue #7 里最坑人的地方。另修写入方式：由原地 `writeFile` 改为**临时文件 + `rename`**——pnpm 安装的包是**硬链接**到共享内容寻址 store 的，原地写会连带改动 store 里的同一份（影响其他使用同版本的项目），`rename` 只替换目录项、不动共享 inode，顺带获得写入原子性（中断的启动不会留下半截文件）。新增 6 个 `npm test` 回归用例：共享根、profile local、profile node_modules、共享根+profile 去重、无任何安装、profiles 目录缺失
-- **v0.5.9**：**修复符号链接 / Junction 型技能查不到（对应 issue #6）**——扫描技能目录时 `readdir` 的 `Dirent` 走的是 lstat 语义：Windows 下符号链接**和 Junction** 都报告 `isDirectory() === false` / `isSymbolicLink() === true`，于是链接型技能（如 `~/.agents/skills/neat` → `D:\repos\icraft-toolkit\skills\neat`）在第 79 行的目录过滤里被静默 `continue` 掉。现在链接条目改用 `stat`（跟随链接）判定真实类型：链接型技能与普通目录**完全一视同仁**，断链或指向普通文件的链接安全跳过（不再抛错、也不占用列表）。四个扫描根（`~/.agents/skills`、`~/.dsh/skills`、项目级 `.agents/skills` / `.dsh/skills`）与 profile 枚举路径全部受益；新增 `npm test`（`node --test`）回归用例：普通目录、链接目录、链接+普通混排、断链、无 `SKILL.md` 的链接、项目级链接技能
+- **v0.5.9**：**修复符号链接 / Junction 型技能查不到（对应 issue #6）**——扫描技能目录时 `readdir` 的 `Dirent` 走的是 lstat 语义：Windows 下符号链接**和 Junction** 都报告 `isDirectory() === false` / `isSymbolicLink() === true`，于是链接型技能（如 `~/.agents/skills/neat` → `D:\repos\my-toolkit\skills\neat`）在第 79 行的目录过滤里被静默 `continue` 掉。现在链接条目改用 `stat`（跟随链接）判定真实类型：链接型技能与普通目录**完全一视同仁**，断链或指向普通文件的链接安全跳过（不再抛错、也不占用列表）。四个扫描根（`~/.agents/skills`、`~/.dsh/skills`、项目级 `.agents/skills` / `.dsh/skills`）与 profile 枚举路径全部受益；新增 `npm test`（`node --test`）回归用例：普通目录、链接目录、链接+普通混排、断链、无 `SKILL.md` 的链接、项目级链接技能
 - **v0.5.7**：**搜索结果按匹配相关度排序**——⚡ 面板与 `/` 补全统一：名字开头匹配 > 名字包含 > 描述 > 拼音，置顶/最近使用只做同级次序；同时过滤掉纯粹"字母分散"的子序列噪音（如搜 `svg` 不再混入 deepseek/openviking 等恰好含 s-v-g 分散字母的技能）。`svg` → svg-diagram 稳居第一
 - **v0.5.6**：**AI 安装指引升级为「GitHub 直装优先」**——快速安装部分改为给 AI/安装助手的优先级决策树：①要最新版/不确定 → `git+ssh` GitHub 直装（git 依赖拉最新 commit，**天然绕过 npm 24h 门禁，百分百新版**）；②要 npm 正式版 → 先 `npm view` 查版本再指定 `@版本` 安装；③**禁止裸名安装**（24h 内会落回旧版）
 - **v0.5.5**：**安装指引升级（AI 友好）**——README 快速安装改为「先 `npm view dsh-skill-picker version` 查版本号 → 再 `add dsh-skill-picker@版本号` 指定安装」，并给 AI/安装助手显式提示：新版本发布后 **24 小时内裸名安装会被 minimumReleaseAge 门禁拦截并自动落回旧版**，必须指定版本号才能装到最新
@@ -190,63 +228,6 @@ source.onPick = (args) => { track(args?.candidate?.name); return onPick.call(sou
 - **v0.2.0**：注册为 `/` 补全候选源（fuzzysort 模糊匹配 + 最近/常用排序，排序规则与 ⚡ 面板统一）
 - **v0.1.0**：初版——⚡ 按钮弹窗搜索点选技能
 
-## 兼容性与注意事项
+## 10、License
 
-- **技能来源**：**优先走官方宿主 skills API**（`connection.api.skills.list`——与 DSH 内置 `/` 补全**完全同一个数据源**，会话作用域，自动覆盖全部官方目录）；官方 API 不可用时**自动回退**到内置扫描。两条路都支持 `DSH_HOME` 环境变量。
-- **兜底扫描范围**：与官方 `dsh-skill-filesystem` provider 的默认根完全同源——项目级 `<workspace>/.dsh/skills`、`<workspace>/.agents/skills`，用户级 `~/.dsh/skills`、`~/.agents/skills`（`$DSH_AGENTS_HOME` 可覆盖），同名时按官方 rank 项目级优先。走兜底时 ⚡ 面板底部显示「本地扫描」徽标。
-- **链接型技能**：技能目录里的**符号链接 / Junction**会被跟随读取（v0.5.9 起，对应 issue #6），链接型技能与普通目录一视同仁；断链、指向普通文件的链接静默跳过，不影响其它技能。
-- **暂不支持**：自定义技能目录（官方 `customSkillDirs` 配置）——需要的话欢迎 PR。
-- **失败保护**：client 端用 `ctx.slots.inject`（等 `conversation.input.right` 插槽声明存在才注册，插槽缺失时静默跳过，不会拖垮启动）；host 端路由 try/catch，扫描目录不存在时返回空列表而非报错。
-- **依赖版本**：peer 范围声明为 `^0.1.0-rc.6 || >=0.2.0-rc.1 <1.0.0-0`（v0.5.13 起）——DSH 的启动加载门会拿**内核版本**逐项比对 `@deepseek-ai/dsh*` 的 peer 范围，而内核包是**锁步同版本**的，钉死单个小版本线会让插件在内核每次升级时被**误拒**（`skipping profile bundle`，表现为 ⚡ 按钮消失、无其它症状）。真正的"已验证到哪一版"以 `package.json` 的 `dsh.compatibility.dshReleases` 为准；要回退只需 `dsh plugin --profile web remove dsh-skill-picker`。
-- **桌面端（Electron）**：**v0.5.15 起不再需要任何手工处理**。`/` 菜单的模糊/拼音升级改为**运行时接管**官方源（见上节），因此官方技能 UI 是放在 `resources/app/node_modules/…`（未打包构建）还是 `resources/app.asar` 里（打包构建，**只能读不能写**）都不影响——`app.asar`、pnpm 硬链接、迁移后悬空的软链一律免疫。
-  - 内核若**不提供** `inputTriggers` 服务，插件自动退回旧的**文件补丁**路径；该路径的候选顺序是：共享根 `profiles/node_modules/…` → 各 profile 的 `local/` 与 `node_modules/` → 活动桌面安装树 `<resources>/app/node_modules/…`。
-  - 旧路径失效时（补丁打在了没人在用的副本上）启动日志会明确告警，v0.5.14 起指向 issue #14；对应的手工自救法是把官方包复制到 `profiles/<profile>/local/dsh-client-ui-skill`，并在 profile 的 `package.json` 里加 `"@deepseek-ai/dsh-client-ui-skill": "link:…"`。
-
-## 开发
-
-```sh
-# 安装依赖（提供 esbuild / fuzzysort / pinyin-pro）
-npm install
-
-# 构建（源码 src/ → 产物 lib/；client 半自动包 __ModuleLoader__ 握手）
-npm run build
-
-# 安装到 web profile（link 模式，改源码即生效）
-dsh plugin --profile web add link:$PWD
-
-# 语法自检（产物）
-node --check lib/index.js
-node --check lib/client.js
-```
-
-> ⚠️ 改完源码**必须 `npm run build`**：`lib/client.js` 是构建产物，ESM 源码不能直接作
-> 为 client bundle 加载——DSH web shell 要求 client bundle 以
-> `window.__ModuleLoader__.load({ id, factory })` 的 CJS 握手格式注册，否则启动报
-> `loaded without registering "dsh-skill-picker" via __ModuleLoader__.load`。
-> 构建脚本（`build.mjs`）会通过 esbuild 的 banner/footer 自动注入这段握手。
-
-目录结构：
-
-```
-dsh-skill-picker/
-├── package.json        # dsh.bundle.patch + dsh.client 声明 + build script
-├── cordis.patch.yml    # bundle patch：把插件行插入 web profile
-├── build.mjs           # esbuild 构建：host ESM + client CJS(__ModuleLoader__握手)
-├── src/
-│   ├── index.js        # host 半源码：/dsh-skill-picker/skills 路由 + prompt section
-│   └── client/
-│       └── index.jsx   # client 半源码：conversation.input.right 插槽组件
-├── lib/                # 构建产物（勿手改，`npm run build` 生成）
-│   ├── index.js
-│   └── client.js
-└── README.md
-```
-
-## 依赖
-
-- host：`@deepseek-ai/cordis`、`@deepseek-ai/dsh-host-webserver`、`@deepseek-ai/dsh-skill`、`@deepseek-ai/dsh-system-prompt`
-- client：`@deepseek-ai/dsh-client-runtime`、`@deepseek-ai/dsh-client-ui-slots`、`react`、`pinyin-pro`（拼音索引，打包进 client bundle）
-
-## License
-
-MIT
+[MIT](LICENSE)
