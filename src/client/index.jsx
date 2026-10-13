@@ -22,6 +22,7 @@ import { pinyin } from 'pinyin-pro'
 import { sessionIdOf, useWorkspaceCwd } from './session-view.js'
 import { SHARED_STATE_EVENT, pushSharedState, syncSharedState } from './shared-state.js'
 import { installSlashFuzzy, slashEnhancementMode, warmSlashSkill } from './slash-source.js'
+import { t } from './locale.js'
 
 /** Required services: slot registry, host connection (official skills API), sessions (workspace cwd fallback), input triggers (/ fuzzy source). */
 export const inject = ['slots', 'connection', 'sessions', 'inputTriggers']
@@ -236,9 +237,9 @@ function groupByPinned(skills, usage, pinned) {
     // Plain titles, no emoji: these are section headings, and DSH's own
     // headings (侧栏的「工作区」/「会话」) are plain text. Icon-laden headings did
     // not match DSH's own visual language, so no emoji here.
-    { title: '置顶', items: pinnedList },
-    { title: '最近使用', items: recent },
-    { title: '全部', items: rest },
+    { title: t('group.pinned'), items: pinnedList },
+    { title: t('group.recent'), items: recent },
+    { title: t('group.all'), items: rest },
   ].filter((group) => group.items.length > 0)
 }
 
@@ -787,18 +788,18 @@ function SkillPickerButton(props) {
     const result = await skillOp(action, { name, cwd: props.cwd, ...extra })
     setBusySkill('')
     if (result.ok !== true) {
-      setNotice({ kind: 'err', text: result.error ?? '操作失败' })
+      setNotice({ kind: 'err', text: result.error ?? t('notice.opFailed') })
       return
     }
     if (action === 'uninstall') {
       const id = String(result.backupPath ?? '').split(/[\\/]/).filter(Boolean).pop()
-      setNotice({ kind: 'ok', text: `已卸载 /${name} —— 只是移进备份目录，没删`, undo: id })
+      setNotice({ kind: 'ok', text: t('notice.uninstalled', { name }), undo: id })
     } else if (action === 'disable') {
-      setNotice({ kind: 'ok', text: `已关闭 /${name} —— agent 也不会再加载它了` })
+      setNotice({ kind: 'ok', text: t('notice.disabled', { name }) })
     } else if (action === 'enable') {
-      setNotice({ kind: 'ok', text: `已开启 /${name}` })
+      setNotice({ kind: 'ok', text: t('notice.enabled', { name }) })
     } else if (action === 'reveal') {
-      setNotice({ kind: 'ok', text: `已在文件管理器里定位 /${name}` })
+      setNotice({ kind: 'ok', text: t('notice.revealed', { name }) })
     }
     await Promise.all([load(true), loadDisabled()])
   }
@@ -809,10 +810,10 @@ function SkillPickerButton(props) {
     const result = await skillOp('restore', { id, cwd: props.cwd })
     setBusySkill('')
     if (result.ok !== true) {
-      setNotice({ kind: 'err', text: result.error ?? '撤回失败' })
+      setNotice({ kind: 'err', text: result.error ?? t('notice.undoFailed') })
       return
     }
-    setNotice({ kind: 'ok', text: '已撤回，技能回到原位置' })
+    setNotice({ kind: 'ok', text: t('notice.undone') })
     await Promise.all([load(true), loadDisabled()])
   }
 
@@ -1038,8 +1039,8 @@ function SkillPickerButton(props) {
       <button
         type="button"
         onClick={toggle}
-        title={`选择技能（插入 /技能名 到发送框）${source === 'host' ? '　·　列表来自本地扫描' : ''}${slashEnhancementMode() === 'runtime' ? '　·　/ 增强：运行时接管' : ''}`}
-        aria-label="选择技能"
+        title={`${t('btn.title')}${source === 'host' ? t('btn.title.local') : ''}${slashEnhancementMode() === 'runtime' ? t('btn.title.slash') : ''}`}
+        aria-label={t('btn.aria')}
         style={{
           ...buttonStyle,
           ...(open ? { color: 'var(--dsw-alias-label-primary-bluish, #4cc9f0)' } : {}),
@@ -1055,21 +1056,21 @@ function SkillPickerButton(props) {
             onKeyDown={onKeyDown}
             onFocus={() => setSearchFocus(true)}
             onBlur={() => setSearchFocus(false)}
-            placeholder="搜索技能…（↑↓ 选择，Enter 插入）"
+            placeholder={t('search.placeholder')}
             style={{ ...searchStyle, ...(searchFocus ? searchFocusStyle : {}) }}
             autoFocus
           />
           {error !== undefined ? (
-            <div style={statusStyle}>{`加载失败：${error}`}</div>
+            <div style={statusStyle}>{t('status.loadFailed', { error })}</div>
           ) : skills === undefined ? (
-            <div style={statusStyle}>加载中…</div>
+            <div style={statusStyle}>{t('status.loading')}</div>
           ) : (
             <>
               <div style={listStyle}>
                 {view === 'off' ? (
                   offFiltered.length === 0 ? (
                     <div style={statusStyle}>
-                      {query.trim() === '' ? '没有被关闭的技能' : '没有匹配的已关闭技能'}
+                      {query.trim() === '' ? t('empty.noDisabled') : t('empty.noMatchDisabled')}
                     </div>
                   ) : (
                     offFiltered.map((skill) => (
@@ -1098,7 +1099,7 @@ function SkillPickerButton(props) {
                     ))
                   )
                 ) : filtered.length === 0 ? (
-                  <div style={statusStyle}>没有匹配的技能</div>
+                  <div style={statusStyle}>{t('empty.noMatch')}</div>
                 ) : (() => {
                   let itemIndex = 0
                   const renderItem = (skill, index) => (
@@ -1203,7 +1204,7 @@ function SkillPickerButton(props) {
                       onClick={() => void undoUninstall(notice.undo)}
                       style={{ cursor: 'pointer', textDecoration: 'underline', flex: 'none' }}
                     >
-                      撤回
+                      {t('notice.undo')}
                     </span>
                   )}
                 </div>
@@ -1232,12 +1233,12 @@ function SkillPickerButton(props) {
                 }}
               >
                 <span style={{ minWidth: '0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {view === 'off' ? '右键可开启 · 手机长按' : '右键可管理 · 手机长按'}
+                  {view === 'off' ? t('footer.hint.off') : t('footer.hint.all')}
                 </span>
                 <span
                   role="button"
                   tabIndex={-1}
-                  title={view === 'off' ? '回到全部技能' : '查看被关闭的技能'}
+                  title={view === 'off' ? t('footer.title.off') : t('footer.title.all')}
                   onClick={() => {
                     setView(view === 'off' ? 'all' : 'off')
                     setQuery('')
@@ -1252,7 +1253,7 @@ function SkillPickerButton(props) {
                     whiteSpace: 'nowrap',
                   }}
                 >
-                  {view === 'off' ? '← 全部技能' : `已关闭 ${disabledSkills.length}`}
+                  {view === 'off' ? t('footer.chip.all') : t('footer.chip.off', { count: disabledSkills.length })}
                 </span>
               </div>
               {/* The actions menu. Rendered here (not inside the row) so it can
@@ -1275,7 +1276,7 @@ function SkillPickerButton(props) {
                         togglePin(menu.skill.name)
                       }}
                     >
-                      {pinned.includes(menu.skill.name) ? '取消置顶' : '置顶到顶部'}
+                      {pinned.includes(menu.skill.name) ? t('menu.unpin') : t('menu.pin')}
                     </div>
                   )}
                   <div
@@ -1290,7 +1291,7 @@ function SkillPickerButton(props) {
                       void runSkillOp(turningOff ? 'disable' : 'enable', target)
                     }}
                   >
-                    {menu.disabled ? '开启' : '关闭（agent 也不再加载）'}
+                    {menu.disabled ? t('menu.enable') : t('menu.disable')}
                   </div>
                   <div
                     style={menuItemStyle}
@@ -1303,7 +1304,7 @@ function SkillPickerButton(props) {
                       void runSkillOp('reveal', target)
                     }}
                   >
-                    在文件管理器中定位
+                    {t('menu.reveal')}
                   </div>
                   {!menu.disabled && (
                     <div
@@ -1314,11 +1315,11 @@ function SkillPickerButton(props) {
                       onClick={() => {
                         const target = menu.skill
                         setMenu(undefined)
-                        if (!window.confirm(`卸载 /${target.name}？\n\n它会被移进备份目录（不是删除），面板里可以撤回。`)) return
+                        if (!window.confirm(t('menu.uninstall.confirm', { name: target.name }))) return
                         void runSkillOp('uninstall', target)
                       }}
                     >
-                      卸载（移入备份，可撤回）
+                      {t('menu.uninstall')}
                     </div>
                   )}
                 </div>
