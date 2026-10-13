@@ -3,6 +3,8 @@
 [![npm version](https://img.shields.io/npm/v/dsh-skill-picker.svg)](https://www.npmjs.com/package/dsh-skill-picker)
 [![license](https://img.shields.io/npm/l/dsh-skill-picker.svg)](https://github.com/a735624258/dsh-skill-picker/blob/main/LICENSE)
 
+**[Русский](README.ru.md)** · **[English](README.md)** · **[简体中文](README.md)**
+
 > **给 DSH 的输入框加一个 ⚡ 按钮：点开是你装过的全部技能（带说明），搜一下、点一下，`/技能名` 就进了发送框，DSH 自己把技能加载起来执行。**
 
 **English** — A skill picker for the DSH Web GUI. A ⚡ button in the composer lists every installed skill with its description; picking one inserts the official `/skill-name` gesture into your draft, so DSH loads that skill with your message.

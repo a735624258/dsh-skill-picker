@@ -65,6 +65,7 @@
     "cordis.patch.yml",
     "docs",
     "README.md",
+    "README.ru.md",
     "CHANGELOG.md"
   ],
   "license": "MIT",
