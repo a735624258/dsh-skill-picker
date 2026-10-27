@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Skill Picker",
+    "description": "A ⚡ button beside the composer lists every installed skill with its description; one click puts /skill-name into the draft."
+  }
+}

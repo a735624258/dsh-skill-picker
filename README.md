@@ -9,7 +9,7 @@
 
 | | |
 |---|---|
-| 当前版本 | v0.5.28 |
+| 当前版本 | v0.5.29 |
 | 许可 | MIT |
 | 平台 | DSH 网页端 / 桌面端（Electron）/ 手机浏览器 |
 | 内核 | DSH `0.1.x` 与 `0.2.x`（见 [4.4](#44-兼容性与注意事项)） |
@@ -141,6 +141,7 @@ dsh-skill-picker/
 ├── package.json            # dsh.bundle.patch + dsh.client 声明 + 兼容性表
 ├── cordis.patch.yml        # bundle patch：把插件行插进 web profile
 ├── build.mjs               # esbuild 构建：host ESM + client CJS
+├── locale/                 # 官方插件页显示的名字与说明（en 为锚点，zh 为中文）
 ├── src/
 │   ├── index.js            #   host：技能目录路由 + agent 引导段
 │   ├── skill-ops.js        #   host：关闭 / 开启 / 定位 / 卸载 / 撤回
@@ -158,17 +159,19 @@ dsh-skill-picker/
 
 测试最近一次结果：**88 用例 / 87 通过 / 1 跳过 / 0 失败**（跳过那条需要 Windows 建符号链接的权限）。
 
+`locale/` 是给官方看的：插件页和「设置 → 内置插件」用 `meta.title` / `meta.description` 显示名字与一行说明，并且搜索框认这两个字段。官方拿 `en.json` 当目录锚点，所以两个文件都得有 —— 只放 `zh.json` 会被整份忽略；`exports` 里也要放行 `./locale/*`，否则解析器取不到。
+
 ---
 
 ## 更新日志
 
 最近 3 个版本：
 
+- **v0.5.29** —— 官方插件页显示「技能选择器」+ 中文说明，可用中文搜到
 - **v0.5.28** —— 新置顶的技能排到「置顶」分组的最前面
 - **v0.5.27** —— 手机端「插完技能光标不回」的配套豁免牌
-- **v0.5.26** —— ⚡ 面板可管理技能（右键菜单）+ 12 项细节修复
 
-各版本说明（版本速览 + 12 个版本的详细说明）见 **[CHANGELOG.md](CHANGELOG.md)**。
+各版本说明（版本速览 + 13 个版本的详细说明）见 **[CHANGELOG.md](CHANGELOG.md)**。
 
 ---
 
