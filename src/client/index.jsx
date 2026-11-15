@@ -16,6 +16,7 @@
  */
 
 import React, { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import fuzzysort from 'fuzzysort'
 import { pinyin } from 'pinyin-pro'
 
@@ -1255,10 +1256,19 @@ function SkillPickerButton(props) {
                   {view === 'off' ? '← 全部技能' : `已关闭 ${disabledSkills.length}`}
                 </span>
               </div>
-              {/* The actions menu. Rendered here (not inside the row) so it can
-                  be positioned against the viewport and never clipped by the
-                  list's own scrolling. */}
-              {menu !== undefined && (
+              {/* The actions menu. Portaled to document.body (issue #17), so it
+                  can be positioned against the viewport and never clipped by
+                  the list's own scrolling — and, more importantly, so its
+                  position:fixed stays viewport-based even when a composer
+                  ancestor (transform / backdrop-filter / contain, as DSH
+                  Desktop 2.0.23+ composes around the input row) establishes a
+                  containing block: inline-rendered, the viewport coordinates
+                  were reinterpreted relative to that ancestor, the menu landed
+                  far off-cursor and stretched the page blank. On body the
+                  fixed basis is the viewport everywhere. React portals keep
+                  bubbling to this component, so the close-on-outside and item
+                  handlers below are unchanged. */}
+              {menu !== undefined && createPortal(
                 <div
                   style={{ ...menuStyle, left: `${menu.x}px`, top: `${menu.y}px` }}
                   onPointerDown={(event) => event.stopPropagation()}
@@ -1321,8 +1331,7 @@ function SkillPickerButton(props) {
                       卸载（移入备份，可撤回）
                     </div>
                   )}
-                </div>
-              )}
+                </div>, document.body)}
             </>
           )}
         </div>
